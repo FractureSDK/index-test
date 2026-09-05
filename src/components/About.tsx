@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { motion, useScroll, useTransform, useInView, useMotionValue, useSpring } from "framer-motion";
 import { useEffect, useState } from "react";
 import { SplitText, FadeUp, Line } from "./Reveal";
+import { stats as statsData } from "@/content/stats";
 
 function Counter({ to, suffix = "" }: { to: number; suffix?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -20,13 +21,6 @@ function Counter({ to, suffix = "" }: { to: number; suffix?: string }) {
     </span>
   );
 }
-
-const stats = [
-  { v: 6, s: "+", l: "年经验 / Years" },
-  { v: 48, s: "", l: "项目 / Projects" },
-  { v: 12, s: "", l: "奖项 / Awards" },
-  { v: 99, s: "%", l: "客户满意度 / Satisfaction" },
-];
 
 export default function About() {
   const ref = useRef<HTMLElement>(null);
@@ -70,7 +64,7 @@ export default function About() {
             </FadeUp>
 
             <div className="mt-16 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-bone/10 bg-bone/10 md:grid-cols-4">
-              {stats.map((s, i) => (
+              {statsData.map((s, i) => (
                 <FadeUp key={s.l} delay={0.1 * i} className="bg-ink p-6 md:p-8">
                   <div className="font-display text-4xl font-semibold tracking-tight md:text-5xl">
                     <Counter to={s.v} suffix={s.s} />

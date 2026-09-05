@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence, useScroll, useSpring } from "framer-motion";
 import Magnetic from "./Magnetic";
-
-const links = [
-  { label: "About", href: "#about", n: "01" },
-  { label: "Work", href: "#work", n: "02" },
-  { label: "Skills", href: "#skills", n: "03" },
-  { label: "Journey", href: "#journey", n: "04" },
-  { label: "Contact", href: "#contact", n: "05" },
-];
+import { navLinks } from "@/content/nav";
+import { siteConfig } from "@/config/site";
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
@@ -30,7 +24,7 @@ export default function Nav() {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
-          timeZone: "Asia/Shanghai",
+          timeZone: siteConfig.timezone,
         }).format(new Date())
       );
     tick();
@@ -67,15 +61,15 @@ export default function Nav() {
               </span>
             </div>
             <div className="hidden flex-col leading-none sm:flex">
-              <span className="font-display text-sm font-semibold tracking-tight">Chu Yuewei</span>
+              <span className="font-display text-sm font-semibold tracking-tight">{siteConfig.name}</span>
               <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-bone/40">
-                Creative Dev
+                {siteConfig.title}
               </span>
             </div>
           </a>
 
           <nav className="hidden items-center gap-1 rounded-full px-2 py-1.5 glass lg:flex">
-            {links.map((l) => (
+            {navLinks.map((l) => (
               <a
                 key={l.href}
                 href={l.href}
@@ -96,7 +90,7 @@ export default function Nav() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
               </span>
-              SHANGHAI {time}
+              {siteConfig.city.toUpperCase()} {time}
             </div>
             <Magnetic>
               <button
@@ -139,7 +133,7 @@ export default function Nav() {
             className="fixed inset-0 z-[65] flex flex-col justify-between bg-[#0b0b10] px-6 pb-10 pt-28"
           >
             <nav className="flex flex-col gap-2">
-              {links.map((l, i) => (
+              {navLinks.map((l, i) => (
                 <motion.a
                   key={l.href}
                   href={l.href}
@@ -160,7 +154,7 @@ export default function Nav() {
               transition={{ delay: 0.8 }}
               className="flex justify-between font-mono text-xs uppercase tracking-widest text-bone/40"
             >
-              <span>Shanghai, CN</span>
+              <span>{siteConfig.city}, {siteConfig.country.slice(0, 2).toUpperCase()}</span>
               <span>{time}</span>
             </motion.div>
           </motion.div>

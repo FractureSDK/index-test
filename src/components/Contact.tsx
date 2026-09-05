@@ -1,16 +1,11 @@
-import { lazy, Suspense, useRef } from "react";
+import { useRef } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { SplitText, Line, FadeUp } from "./Reveal";
 import Magnetic from "./Magnetic";
+import { siteConfig } from "@/config/site";
+import { lazy, Suspense } from "react";
 
 const CosmicCanvas = lazy(() => import("./CosmicCanvas"));
-
-const socials = [
-  { l: "GitHub", h: "https://github.com/chuyuewei" },
-  { l: "Twitter / X", h: "https://x.com" },
-  { l: "LinkedIn", h: "https://linkedin.com" },
-  { l: "Dribbble", h: "https://dribbble.com" },
-];
 
 export default function Contact() {
   const ref = useRef<HTMLElement>(null);
@@ -45,7 +40,7 @@ export default function Contact() {
               <SplitText text="epic." stagger={0.08} delay={0.3} className="shimmer-text" />
               <Magnetic strength={0.5}>
                 <a
-                  href="mailto:hello@chuyuewei.com"
+                  href={`mailto:${siteConfig.email}`}
                   data-cursor="Email"
                   className="group relative flex h-[0.9em] w-[0.9em] items-center justify-center rounded-full bg-accent text-ink"
                 >
@@ -62,9 +57,9 @@ export default function Contact() {
         <div className="mt-20 grid gap-10 border-t border-bone/10 pt-12 md:grid-cols-12 md:gap-6">
           <FadeUp className="md:col-span-5">
             <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-bone/40">Email</p>
-            <a href="mailto:hello@chuyuewei.com" className="group mt-3 inline-block font-display text-2xl font-medium md:text-4xl">
+            <a href={`mailto:${siteConfig.email}`} className="group mt-3 inline-block font-display text-2xl font-medium md:text-4xl">
               <span className="relative">
-                hello@chuyuewei.com
+                {siteConfig.email}
                 <span className="absolute -bottom-1 left-0 h-px w-full origin-right scale-x-0 bg-accent transition-transform duration-500 group-hover:origin-left group-hover:scale-x-100" />
               </span>
             </a>
@@ -76,11 +71,11 @@ export default function Contact() {
           <FadeUp delay={0.1} className="md:col-span-3">
             <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-bone/40">Socials</p>
             <ul className="mt-3 flex flex-col gap-2">
-              {socials.map((s) => (
-                <li key={s.l}>
-                  <a href={s.h} target="_blank" rel="noreferrer" className="group inline-flex items-center gap-2 text-bone/70 transition-colors hover:text-bone">
+              {siteConfig.socials.map((s) => (
+                <li key={s.platform}>
+                  <a href={s.url} target="_blank" rel="noreferrer" className="group inline-flex items-center gap-2 text-bone/70 transition-colors hover:text-bone">
                     <span className="h-px w-0 bg-accent transition-all duration-300 group-hover:w-4" />
-                    {s.l}
+                    {s.platform}
                   </a>
                 </li>
               ))}
@@ -89,21 +84,21 @@ export default function Contact() {
 
           <FadeUp delay={0.2} className="md:col-span-4">
             <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-bone/40">Location</p>
-            <p className="mt-3 text-bone/70">上海，中国</p>
-            <p className="text-bone/50">31.2304° N, 121.4737° E</p>
+            <p className="mt-3 text-bone/70">{siteConfig.city}, {siteConfig.country}</p>
+            <p className="text-bone/50">{siteConfig.coordinates.lat}° N, {siteConfig.coordinates.lng}° E</p>
             <p className="mt-6 font-mono text-[10px] uppercase tracking-[0.3em] text-bone/40">Status</p>
             <p className="mt-3 inline-flex items-center gap-2 text-bone/70">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
               </span>
-              Open to opportunities
+              {siteConfig.availableForWork ? "Open to opportunities" : "Currently unavailable"}
             </p>
           </FadeUp>
         </div>
 
         <footer className="mt-20 flex flex-col items-start justify-between gap-4 border-t border-bone/10 py-8 font-mono text-[11px] uppercase tracking-[0.25em] text-bone/40 md:flex-row md:items-center">
-          <span>© 2026 Chu Yuewei. All rights reserved.</span>
+          <span>© {siteConfig.portfolioYear} {siteConfig.name}. All rights reserved.</span>
           <span className="hidden md:inline">Designed & built with obsession</span>
           <a href="#top" className="group inline-flex items-center gap-2 transition-colors hover:text-bone">
             Back to top
