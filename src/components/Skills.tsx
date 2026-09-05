@@ -1,17 +1,33 @@
-import { useRef, useState } from "react";
-import { motion, useScroll, useTransform } from "framer-motion";
+import { useRef, useState, lazy, Suspense } from "react";
+import { motion } from "framer-motion";
 import { SplitText, Line, FadeUp } from "./Reveal";
 import { skillGroups, tools } from "@/content/skills";
+import CosmicParticles from "./CosmicParticles";
+import CosmicVortex from "./CosmicVortex";
+
+const CosmicVortex3D = lazy(() => import("./CosmicVortex"));
+const CosmicParticles3D = lazy(() => import("./CosmicParticles"));
 
 export default function Skills() {
   const ref = useRef<HTMLElement>(null);
   const [active, setActive] = useState<number | null>(null);
-  const { scrollYProgress } = useScroll({ target: ref, offset: ["start end", "end start"] });
-  const x1 = useTransform(scrollYProgress, [0, 1], ["0%", "-30%"]);
-  const x2 = useTransform(scrollYProgress, [0, 1], ["-30%", "0%"]);
 
   return (
     <section id="skills" ref={ref} className="relative overflow-hidden py-28 md:py-44">
+      {/* Three.js cosmic particle background */}
+      <Suspense fallback={null}>
+        <CosmicParticles3D density="medium" />
+      </Suspense>
+      
+      {/* Central cosmic vortex for visual impact */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <Suspense fallback={null}>
+          <div className="absolute left-1/2 top-1/2 h-[800px] w-[800px] -translate-x-1/2 -translate-y-1/2 opacity-40">
+            <CosmicVortex3D particleCount={1200} radius={40} speed={0.2} color="#c8ff3d" />
+          </div>
+        </Suspense>
+      </div>
+      
       <div className="pointer-events-none absolute left-1/2 top-1/2 h-[60vw] w-[60vw] -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-deep/10 blur-[160px]" />
 
       <div className="mx-auto max-w-[1600px] px-5 md:px-10">
@@ -42,7 +58,7 @@ export default function Skills() {
 
           <div className="lg:col-span-7">
             <div className="flex flex-col" onMouseLeave={() => setActive(null)}>
-              {groups.map((g, i) => (
+              {skillGroups.map((g, i) => (
                 <FadeUp key={g.title} delay={i * 0.08}>
                   <div
                     onMouseEnter={() => setActive(i)}
@@ -97,21 +113,46 @@ export default function Skills() {
         </div>
       </div>
 
-      {/* Parallax tool rows */}
-      <div className="mt-24 space-y-4 md:mt-36">
-        <motion.div style={{ x: x1 }} className="flex w-max gap-4">
-          {[...tools, ...tools].map((t, i) => (
-            <span key={i} className="whitespace-nowrap rounded-full border border-bone/10 px-6 py-3 font-display text-lg text-bone/50 md:text-2xl">
-              {t}
-            </span>
-          ))}
-        </motion.div>
-        <motion.div style={{ x: x2 }} className="flex w-max gap-4">
-          {[...tools].reverse().concat([...tools].reverse()).map((t, i) => (
-            <span key={i} className="whitespace-nowrap rounded-full bg-bone/[0.04] px-6 py-3 font-display text-lg text-bone/50 md:text-2xl">
-              {t}
-            </span>
-          ))}
+      {/* Cosmic tool rings - replacing parallax rows with 3D-inspired floating elements */}
+      <div className="mt-24 flex items-center justify-center md:mt-36">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 60, ease: "linear" }}
+          className="relative h-64 w-64 md:h-96 md:w-96"
+        >
+          <div className="absolute inset-0 rounded-full border border-dashed border-bone/10" />
+          <div className="absolute inset-8 rounded-full border border-bone/15" />
+          
+          {/* Orbiting tool badges */}
+          {tools.slice(0, 6).map((tool, i) => {
+            const angle = (i / 6) * Math.PI * 2;
+            const radius = 45; // percentage
+            const x = 50 + radius * Math.cos(angle);
+            const y = 50 + radius * Math.sin(angle);
+            return (
+              <motion.div
+                key={tool}
+                animate={{ 
+                  x: [`${x}%`, `${50 + (radius + 5) * Math.cos(angle + 0.3)}%`, `${x}%`],
+                  y: [`${y}%`, `${50 + (radius + 5) * Math.sin(angle + 0.3)}%`, `${y}%`],
+                }}
+                transition={{ 
+                  duration: 8 + i * 2, 
+                  repeat: Infinity, 
+                  ease: "easeInOut",
+                  delay: i * 0.5 
+                }}
+                className="absolute -translate-x-1/2 -translate-y-1/2"
+              >
+                <span className="whitespace-nowrap rounded-full bg-bone/[0.06] px-4 py-2 text-sm font-medium text-bone/70 backdrop-blur-sm">
+                  {tool}
+                </span>
+              </motion.div>
+            );
+          })}
+          
+          {/* Center glow */}
+          <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/10 blur-xl" />
         </motion.div>
       </div>
     </section>
