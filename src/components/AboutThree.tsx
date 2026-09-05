@@ -1,9 +1,13 @@
 import { useRef, useMemo, lazy, Suspense, useState, useEffect } from "react";
 import * as THREE from "three";
-import { useFrame, useThree, Canvas } from "@react-three/fiber";
+import { useFrame, useThree, Canvas, extend } from "@react-three/fiber";
+import { RoundedBoxGeometry } from "@react-three/drei";
 import { stats as statsData } from "@/content/stats";
 import { siteConfig } from "@/config/site";
 import { Line } from "./Reveal";
+
+// Register extended geometries
+extend({ RoundedBoxGeometry });
 
 const StarField = lazy(() => import("./StarField"));
 

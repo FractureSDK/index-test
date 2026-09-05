@@ -1,3 +1,10 @@
 ```
+# Compressed files
+*.tar.gz
+
+# Build artifacts
 dist/
+
+# Dependencies
+node_modules/
 ```
