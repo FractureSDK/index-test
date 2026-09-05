@@ -5,7 +5,7 @@ import Cursor from "./components/Cursor";
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import Marquee from "./components/Marquee";
-import About from "./components/About";
+import AboutThree from "./components/AboutThree";
 import Work from "./components/Work";
 import Skills from "./components/Skills";
 import Journey from "./components/Journey";
@@ -23,7 +23,7 @@ export default function App() {
       <main>
         <Hero start={ready} />
         <Marquee />
-        <About />
+        <AboutThree />
         <Work />
         <Marquee reverse outline />
         <Skills />

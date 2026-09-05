@@ -170,7 +170,7 @@ function AboutScene() {
   );
 }
 
-export default function About() {
+export default function AboutThree() {
   const [isVisible, setIsVisible] = useState(false);
   
   useEffect(() => {
