@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #050507;
+  --color-bone: #f4f1ea;
+  --color-accent: #c8ff3d;
+  --color-violet: #6d4bff;
+
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "Inter", sans-serif;
+
+  /*
+   * Fluid type scale — clamp(min, viewport-relative, max) so headline
+   * sizes stay proportional from a 375px phone up to a 2560px desktop
+   * instead of jumping at breakpoints. Use as text-[length:--text-hero] or
+   * via the classes below.
+   */
+  --text-hero: clamp(3.5rem, 4rem + 7vw, 11rem);
+  --text-display: clamp(2rem, 1.4rem + 3vw, 4.5rem);
+  --text-heading: clamp(1.5rem, 1.2rem + 1.5vw, 2.5rem);
+  --text-body-lg: clamp(1.05rem, 1rem + 0.3vw, 1.35rem);
+}
+
+html {
+  scroll-behavior: auto; /* Lenis drives smooth scroll; avoid double-handling */
+}
+
+body {
+  overscroll-behavior: none;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-ink);
+}
+
+.text-hero {
+  font-size: var(--text-hero);
+  line-height: 0.92;
+}
+.text-display {
+  font-size: var(--text-display);
+  line-height: 1.05;
+}
+.text-heading {
+  font-size: var(--text-heading);
+  line-height: 1.15;
+}
+.text-body-lg {
+  font-size: var(--text-body-lg);
+}
+
+/* ---------------------------- custom cursor ---------------------------- */
+/* Only hidden on fine-pointer devices with motion enabled — see Cursor.tsx,
+   which also feature-detects and won't render on touch/reduced-motion. */
+@media (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  body,
+  a,
+  button {
+    cursor: none;
+  }
+}
+
+/* ------------------------ section mask transitions ------------------------ */
+/* A soft gradient bleed at the top of a section, layered over the section
+   before it, so boundaries read as a continuous fade rather than a hard
+   cut. Usage: wrap a section in a relative container and drop
+   `<div class="section-mask" />` as its first child. */
+.section-mask {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: clamp(80px, 14vw, 220px);
+  background: linear-gradient(to bottom, var(--color-ink) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 10;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.marquee {
+  animation: marquee 28s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

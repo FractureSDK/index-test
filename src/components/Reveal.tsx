@@ -1,91 +1,200 @@
-import { motion, type Variants } from "framer-motion";
-import type { ReactNode } from "react";
+"use client";
 
-const ease = [0.16, 1, 0.3, 1] as const;
+import { useEffect, useRef, type ElementType, type ReactNode } from "react";
+import { gsap } from "@/lib/gsap";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
-/** Split text into words, each word masked and slides up */
-export function SplitText({
+/**
+ * Splits `text` into words, each clipped by an overflow-hidden wrapper, and
+ * animates them up into place with a stagger when the element scrolls into
+ * view. This is the "逐字/逐行浮现" headline treatment.
+ *
+ * Reduced motion: renders the plain text with no wrappers, no animation.
+ */
+export function SplitReveal({
   text,
-  className = "",
-  delay = 0,
-  stagger = 0.04,
-  once = true,
   as: Tag = "span",
+  className = "",
+  stagger = 0.035,
+  start = "top 85%",
 }: {
   text: string;
+  as?: ElementType;
   className?: string;
-  delay?: number;
   stagger?: number;
-  once?: boolean;
-  as?: "span" | "h1" | "h2" | "h3" | "p";
+  start?: string;
 }) {
-  const words = text.split(" ");
-  const container: Variants = {
-    hidden: {},
-    show: { transition: { staggerChildren: stagger, delayChildren: delay } },
-  };
-  const child: Variants = {
-    hidden: { y: "110%", rotate: 4 },
-    show: { y: "0%", rotate: 0, transition: { duration: 0.9, ease } },
-  };
-  const MotionTag = motion[Tag];
+  const ref = useRef<HTMLElement>(null);
+  const reducedMotion = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    const el = ref.current;
+    if (!el) return;
+    const words = el.querySelectorAll<HTMLElement>("[data-word-inner]");
+
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        words,
+        { yPercent: 110 },
+        {
+          yPercent: 0,
+          duration: 0.9,
+          ease: "power4.out",
+          stagger,
+          scrollTrigger: { trigger: el, start },
+        }
+      );
+    }, el);
+
+    return () => ctx.revert();
+  }, [reducedMotion, stagger, start]);
+
+  if (reducedMotion) {
+    return <Tag className={className}>{text}</Tag>;
+  }
+
   return (
-    <MotionTag
-      variants={container}
-      initial="hidden"
-      whileInView="show"
-      viewport={{ once, margin: "-10% 0px" }}
-      className={className}
-      aria-label={text}
-    >
-      {words.map((w, i) => (
+    <Tag ref={ref} className={className}>
+      {text.split(" ").map((word, i) => (
         <span key={i} className="inline-block overflow-hidden pb-[0.08em] align-bottom">
-          <motion.span variants={child} className="inline-block origin-left will-change-transform">
-            {w}
-          </motion.span>
-          {i < words.length - 1 && <span>&nbsp;</span>}
+          <span data-word-inner className="inline-block will-change-transform">
+            {word}
+            {i < text.split(" ").length - 1 ? "\u00A0" : ""}
+          </span>
         </span>
       ))}
-    </MotionTag>
+    </Tag>
   );
 }
 
-/** Generic fade-up reveal */
+/** Simple fade + rise on scroll-into-view, for non-headline content. */
 export function FadeUp({
   children,
-  delay = 0,
   className = "",
-  y = 40,
-  once = true,
+  delay = 0,
+  y = 32,
+  start = "top 88%",
 }: {
   children: ReactNode;
-  delay?: number;
   className?: string;
+  delay?: number;
   y?: number;
-  once?: boolean;
+  start?: string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const reducedMotion = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    const el = ref.current;
+    if (!el) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        el,
+        { opacity: 0, y },
+        { opacity: 1, y: 0, duration: 0.9, delay, ease: "power3.out", scrollTrigger: { trigger: el, start } }
+      );
+    }, el);
+    return () => ctx.revert();
+  }, [reducedMotion, delay, y, start]);
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once, margin: "-8% 0px" }}
-      transition={{ duration: 1, ease, delay }}
-      className={className}
-    >
+    <div ref={ref} className={className} style={reducedMotion ? undefined : { opacity: 0 }}>
       {children}
-    </motion.div>
+    </div>
   );
 }
 
-/** Animated horizontal line */
-export function Line({ className = "", delay = 0 }: { className?: string; delay?: number }) {
+/** A line that draws itself left-to-right on scroll-into-view. */
+export function DrawLine({ className = "" }: { className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const reducedMotion = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    const el = ref.current;
+    if (!el) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        el,
+        { scaleX: 0 },
+        {
+          scaleX: 1,
+          duration: 1,
+          ease: "power3.out",
+          transformOrigin: "left",
+          scrollTrigger: { trigger: el, start: "top 90%" },
+        }
+      );
+    }, el);
+    return () => ctx.revert();
+  }, [reducedMotion]);
+
+  return <div ref={ref} className={`bg-bone/15 h-px w-full ${className}`} />;
+}
+
+/**
+ * Image reveal: a clip-path mask that wipes open on scroll-into-view,
+ * paired with a slight parallax on the image itself. Reduced motion just
+ * shows the finished state immediately.
+ */
+export function ImageReveal({
+  src,
+  alt,
+  className = "",
+  eager = false,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  eager?: boolean;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const reducedMotion = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    const wrap = wrapRef.current;
+    const img = imgRef.current;
+    if (!wrap || !img) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        wrap,
+        { clipPath: "inset(0 0 100% 0)" },
+        {
+          clipPath: "inset(0 0 0% 0)",
+          duration: 1.1,
+          ease: "power4.inOut",
+          scrollTrigger: { trigger: wrap, start: "top 85%" },
+        }
+      );
+      gsap.fromTo(
+        img,
+        { yPercent: -12, scale: 1.15 },
+        {
+          yPercent: 0,
+          scale: 1,
+          ease: "none",
+          scrollTrigger: { trigger: wrap, start: "top bottom", end: "bottom top", scrub: 0.6 },
+        }
+      );
+    }, wrap);
+    return () => ctx.revert();
+  }, [reducedMotion]);
+
   return (
-    <motion.div
-      initial={{ scaleX: 0 }}
-      whileInView={{ scaleX: 1 }}
-      viewport={{ once: true }}
-      transition={{ duration: 1.4, ease, delay }}
-      className={`h-px w-full origin-left bg-bone/15 ${className}`}
-    />
+    <div ref={wrapRef} className={`overflow-hidden ${className}`}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        ref={imgRef}
+        src={src}
+        alt={alt}
+        loading={eager ? "eager" : "lazy"}
+        decoding="async"
+        className="h-full w-full scale-110 object-cover"
+      />
+    </div>
   );
 }

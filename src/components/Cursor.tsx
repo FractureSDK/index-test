@@ -1,61 +1,76 @@
-import { useEffect, useState } from "react";
-import { motion, useMotionValue, useSpring } from "framer-motion";
-import { usePrefersReducedMotion } from "../hooks/usePrefersReducedMotion";
+"use client";
 
+import { useEffect, useRef, useState } from "react";
+import { gsap } from "@/lib/gsap";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+
+/**
+ * Desktop-only custom cursor. Disabled entirely (never mounts its DOM,
+ * never attaches listeners) when:
+ *  - the device doesn't have a fine pointer (touch/stylus),
+ *  - the viewport is below the tablet breakpoint (768px) — per spec,
+ *    mobile keeps the native cursor even on the rare fine-pointer phone,
+ *  - the user prefers reduced motion.
+ */
 export default function Cursor() {
-  const x = useMotionValue(-100);
-  const y = useMotionValue(-100);
-  const sx = useSpring(x, { stiffness: 400, damping: 40, mass: 0.5 });
-  const sy = useSpring(y, { stiffness: 400, damping: 40, mass: 0.5 });
-  const [hover, setHover] = useState(false);
+  const dotRef = useRef<HTMLDivElement>(null);
+  const ringRef = useRef<HTMLDivElement>(null);
   const [label, setLabel] = useState<string | null>(null);
-  const [visible, setVisible] = useState(false);
   const reducedMotion = usePrefersReducedMotion();
+  const finePointer = useMediaQuery("(pointer: fine)");
+  const wideViewport = useMediaQuery("(min-width: 768px)");
+  const active = finePointer && wideViewport && !reducedMotion;
 
   useEffect(() => {
-    if (reducedMotion || !window.matchMedia("(pointer: fine)").matches) return;
-    setVisible(true);
-    const move = (e: MouseEvent) => {
-      x.set(e.clientX);
-      y.set(e.clientY);
-      const el = (e.target as HTMLElement).closest("a, button, [data-cursor]") as HTMLElement | null;
-      setHover(!!el);
-      setLabel(el?.dataset.cursor ?? null);
-    };
-    window.addEventListener("mousemove", move);
-    return () => window.removeEventListener("mousemove", move);
-  }, [x, y, reducedMotion]);
+    if (!active) return;
 
-  if (!visible) return null;
+    const dot = dotRef.current!;
+    const ring = ringRef.current!;
+    const dotX = gsap.quickTo(dot, "x", { duration: 0.15, ease: "power3.out" });
+    const dotY = gsap.quickTo(dot, "y", { duration: 0.15, ease: "power3.out" });
+    const ringX = gsap.quickTo(ring, "x", { duration: 0.45, ease: "power3.out" });
+    const ringY = gsap.quickTo(ring, "y", { duration: 0.45, ease: "power3.out" });
+
+    const move = (e: PointerEvent) => {
+      dotX(e.clientX);
+      dotY(e.clientY);
+      ringX(e.clientX);
+      ringY(e.clientY);
+    };
+
+    const over = (e: PointerEvent) => {
+      const el = (e.target as HTMLElement)?.closest<HTMLElement>("[data-cursor]");
+      setLabel(el?.dataset.cursor || (el ? "" : null));
+      gsap.to(ring, {
+        scale: el ? 2.2 : 1,
+        duration: 0.35,
+        ease: "power3.out",
+      });
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerover", over);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerover", over);
+    };
+  }, [active]);
+
+  if (!active) return null;
 
   return (
-    <>
-      <motion.div
-        className="pointer-events-none fixed left-0 top-0 z-[100] mix-blend-difference"
-        style={{ x: sx, y: sy, translateX: "-50%", translateY: "-50%" }}
+    <div className="pointer-events-none fixed inset-0 z-[100] mix-blend-difference" aria-hidden>
+      <div
+        ref={ringRef}
+        className="border-bone/70 absolute top-0 left-0 -mt-4 -ml-4 flex h-8 w-8 items-center justify-center rounded-full border"
       >
-        <motion.div
-          animate={{
-            width: label ? 88 : hover ? 56 : 14,
-            height: label ? 88 : hover ? 56 : 14,
-            backgroundColor: hover ? "rgba(244,241,234,1)" : "rgba(244,241,234,1)",
-          }}
-          transition={{ type: "spring", stiffness: 300, damping: 25 }}
-          className="flex items-center justify-center rounded-full"
-        >
-          {label && (
-            <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-black">
-              {label}
-            </span>
-          )}
-        </motion.div>
-      </motion.div>
-      <motion.div
-        className="pointer-events-none fixed left-0 top-0 z-[99] h-10 w-10 rounded-full border border-bone/30"
-        style={{ x, y, translateX: "-50%", translateY: "-50%" }}
-        animate={{ scale: hover ? 0 : 1, opacity: hover ? 0 : 1 }}
-        transition={{ duration: 0.25 }}
+        {label && <span className="text-bone text-[9px] font-medium tracking-wide uppercase">{label}</span>}
+      </div>
+      <div
+        ref={dotRef}
+        className="bg-bone absolute top-0 left-0 -mt-[3px] -ml-[3px] h-1.5 w-1.5 rounded-full"
       />
-    </>
+    </div>
   );
 }

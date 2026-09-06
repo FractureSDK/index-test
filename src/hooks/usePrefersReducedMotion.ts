@@ -1,22 +1,27 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+const QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribe(callback: () => void) {
+  const mq = window.matchMedia(QUERY);
+  mq.addEventListener("change", callback);
+  return () => mq.removeEventListener("change", callback);
+}
+
+function getSnapshot() {
+  return window.matchMedia(QUERY).matches;
+}
+
+function getServerSnapshot() {
+  return false;
+}
 
 /**
- * Tracks the user's `prefers-reduced-motion` OS setting.
- * The CSS rule in index.css already shortens transition/animation
- * durations, but Framer Motion drives its animations in JS and ignores
- * that CSS — components with large/attention-grabbing motion (custom
- * cursor, preloader, parallax) should check this and back off.
+ * Tracks the user's `prefers-reduced-motion` OS setting via
+ * `useSyncExternalStore` — the correct way to subscribe to an external
+ * source like `matchMedia` (no `setState` inside an effect, no
+ * hydration-mismatch flash on the client).
  */
 export function usePrefersReducedMotion() {
-  const [reduced, setReduced] = useState(false);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setReduced(mq.matches);
-    const onChange = (e: MediaQueryListEvent) => setReduced(e.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-
-  return reduced;
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

@@ -1,43 +1,54 @@
-import { useRef, type ReactNode, type MouseEvent } from "react";
-import { motion, useMotionValue, useSpring } from "framer-motion";
+"use client";
 
-interface Props {
+import { useEffect, useRef, type ReactNode } from "react";
+import { gsap } from "@/lib/gsap";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+
+export default function Magnetic({
+  children,
+  strength = 0.4,
+  className = "",
+}: {
   children: ReactNode;
   strength?: number;
   className?: string;
-}
-
-export default function Magnetic({ children, strength = 0.35, className }: Props) {
+}) {
   const ref = useRef<HTMLDivElement>(null);
-  const x = useMotionValue(0);
-  const y = useMotionValue(0);
-  const sx = useSpring(x, { stiffness: 200, damping: 15, mass: 0.4 });
-  const sy = useSpring(y, { stiffness: 200, damping: 15, mass: 0.4 });
+  const reducedMotion = usePrefersReducedMotion();
 
-  const onMove = (e: MouseEvent<HTMLDivElement>) => {
+  useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const dx = e.clientX - (rect.left + rect.width / 2);
-    const dy = e.clientY - (rect.top + rect.height / 2);
-    x.set(dx * strength);
-    y.set(dy * strength);
-  };
+    const supported =
+      window.matchMedia("(pointer: fine)").matches && window.matchMedia("(min-width: 768px)").matches;
+    if (reducedMotion || !supported) return;
 
-  const onLeave = () => {
-    x.set(0);
-    y.set(0);
-  };
+    const x = gsap.quickTo(el, "x", { duration: 0.4, ease: "power3.out" });
+    const y = gsap.quickTo(el, "y", { duration: 0.4, ease: "power3.out" });
+
+    const move = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      const relX = e.clientX - (rect.left + rect.width / 2);
+      const relY = e.clientY - (rect.top + rect.height / 2);
+      x(relX * strength);
+      y(relY * strength);
+    };
+    const leave = () => {
+      x(0);
+      y(0);
+    };
+
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerleave", leave);
+    return () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerleave", leave);
+    };
+  }, [reducedMotion, strength]);
 
   return (
-    <motion.div
-      ref={ref}
-      onMouseMove={onMove}
-      onMouseLeave={onLeave}
-      style={{ x: sx, y: sy }}
-      className={className}
-    >
+    <div ref={ref} className={`inline-block will-change-transform ${className}`}>
       {children}
-    </motion.div>
+    </div>
   );
 }
