@@ -4,6 +4,7 @@ import { SplitText, Line, FadeUp } from "./Reveal";
 import { skillGroups, tools } from "@/content/skills";
 import CosmicParticles from "./CosmicParticles";
 import CosmicVortex from "./CosmicVortex";
+import { Canvas } from "@react-three/fiber";
 
 const CosmicVortex3D = lazy(() => import("./CosmicVortex"));
 const CosmicParticles3D = lazy(() => import("./CosmicParticles"));
@@ -23,7 +24,13 @@ export default function Skills() {
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <Suspense fallback={null}>
           <div className="absolute left-1/2 top-1/2 h-[800px] w-[800px] -translate-x-1/2 -translate-y-1/2 opacity-40">
-            <CosmicVortex3D particleCount={1200} radius={40} speed={0.2} color="#c8ff3d" />
+            <Canvas
+              camera={{ position: [0, 0, 60], fov: 50 }}
+              gl={{ antialias: true, alpha: true }}
+              dpr={[1, 2]}
+            >
+              <CosmicVortex3D particleCount={1200} radius={40} speed={0.2} color="#c8ff3d" />
+            </Canvas>
           </div>
         </Suspense>
       </div>
