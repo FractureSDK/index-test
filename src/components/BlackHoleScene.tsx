@@ -5,15 +5,17 @@ import * as THREE from "three";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 /**
- * A stylized black hole: a solid dark event horizon, a bright thin photon
- * ring right at its edge, and a tilted accretion disk of particles that
- * runs faster the closer they orbit (roughly Keplerian) with a
- * temperature-like color gradient (white-hot near the horizon, cooling to
- * violet further out). Not a physically-accurate lensing simulation — a
- * legible, GPU-cheap impression of one, built for a hero background.
+ * A "Gargantua"-style lensed black hole. The iconic look isn't a particle
+ * cloud — it's a flat accretion disk PLUS a second ring left facing the
+ * camera (unrotated) so it reads as a halo wrapping the poles, which is
+ * the classic cheat for faking gravitational lensing without a real
+ * ray-marched shader: two rings, same radius, perpendicular to each other,
+ * sharing one tilt.
  *
- * Desktop-only by convention (see HeroBackground.tsx, which picks this vs.
- * the lighter wireframe model based on viewport width).
+ * Both rings use a procedurally painted canvas texture (radial brightness
+ * falloff + angular turbulence + a one-sided brightness bias standing in
+ * for relativistic Doppler beaming) rather than solid color, so they read
+ * as wispy/fibrous rather than a flat gradient ring.
  */
 export default function BlackHoleScene({ className = "" }: { className?: string }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -33,8 +35,8 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
     if (!mount) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
-    camera.position.set(0, 14, 46);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
+    camera.position.set(0, 14, 50);
     camera.lookAt(0, 0, 0);
 
     const renderer = new THREE.WebGLRenderer({
@@ -46,102 +48,183 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
     mount.appendChild(renderer.domElement);
 
     const group = new THREE.Group();
-    group.rotation.x = -0.55; // tilt so the disk reads in perspective
+    group.rotation.x = -0.42; // moderate tilt, close to the reference angle
     scene.add(group);
 
+    // ---------------------------- procedural disk texture ----------------------------
+    // RingGeometry UVs: v (0→1) runs inner→outer radius, u (0→1) runs around
+    // the angle — so vertical position in this canvas is radial distance,
+    // horizontal position is angle.
+    function makeDiskTexture(beamBiasDeg: number) {
+      const W = 512;
+      const H = 64;
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d")!;
+      const img = ctx.createImageData(W, H);
+      const bias = (beamBiasDeg * Math.PI) / 180;
+
+      const hot = [255, 248, 235]; // near-white
+      const gold = [255, 205, 130];
+      const amber = [230, 120, 55];
+      const dim = [90, 40, 25];
+
+      const lerp3 = (a: number[], b: number[], t: number) => a.map((v, i) => v + (b[i] - v) * t);
+
+      for (let y = 0; y < H; y++) {
+        const v = y / (H - 1); // 0 = inner edge, 1 = outer edge
+        // radial brightness: hottest near the inner edge, falling off outward
+        const radialFalloff = Math.pow(1 - v, 1.6);
+        for (let x = 0; x < W; x++) {
+          const u = x / (W - 1);
+          const angle = u * Math.PI * 2;
+
+          // turbulence: a handful of overlapping sine waves at different
+          // angular frequencies so brightness varies unevenly around the
+          // ring, reads as wisps/streaks rather than a uniform band
+          const noise =
+            0.5 +
+            0.22 * Math.sin(angle * 5 + v * 9) +
+            0.16 * Math.sin(angle * 11 - v * 5 + 2.1) +
+            0.12 * Math.sin(angle * 23 + v * 3 + 4.4);
+
+          // relativistic-beaming stand-in: brighter on one side
+          const beam = 0.55 + 0.45 * Math.cos(angle - bias);
+
+          let brightness = radialFalloff * Math.max(noise, 0) * beam;
+          brightness = Math.max(0, Math.min(1, brightness));
+
+          // gap streaks: occasionally darken a thin angular band so
+          // individual filaments separate instead of a solid wash
+          const gap = Math.sin(angle * 37 + v * 13);
+          if (gap > 0.94) brightness *= 0.25;
+
+          let color: number[];
+          if (brightness > 0.75) color = lerp3(gold, hot, (brightness - 0.75) / 0.25);
+          else if (brightness > 0.4) color = lerp3(amber, gold, (brightness - 0.4) / 0.35);
+          else color = lerp3(dim, amber, brightness / 0.4);
+
+          const i = (y * W + x) * 4;
+          img.data[i] = color[0];
+          img.data[i + 1] = color[1];
+          img.data[i + 2] = color[2];
+          img.data[i + 3] = Math.round(brightness * 255);
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    const diskTexture = makeDiskTexture(35);
+    const haloTexture = makeDiskTexture(35);
+
+    const diskMat = new THREE.MeshBasicMaterial({
+      map: diskTexture,
+      transparent: true,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const haloMat = new THREE.MeshBasicMaterial({
+      map: haloTexture,
+      transparent: true,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      opacity: 0.85,
+    });
+
+    // main disk — laid flat (in the group's local XZ plane)
+    const diskGeo = new THREE.RingGeometry(5.4, 17, 128, 1);
+    const disk = new THREE.Mesh(diskGeo, diskMat);
+    disk.rotation.x = Math.PI / 2;
+    group.add(disk);
+
+    // halo — same ring, left facing the camera (no extra rotation), same
+    // radius range but tighter, so it wraps the sphere's poles
+    const haloGeo = new THREE.RingGeometry(5.2, 9.5, 128, 1);
+    const halo = new THREE.Mesh(haloGeo, haloMat);
+    group.add(halo);
+
     // ---------------------------- event horizon ----------------------------
-    const horizonGeo = new THREE.SphereGeometry(6.2, 48, 48);
+    const horizonGeo = new THREE.SphereGeometry(5.1, 48, 48);
     const horizonMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
     const horizon = new THREE.Mesh(horizonGeo, horizonMat);
     group.add(horizon);
 
-    // photon ring — a thin, very bright rim right at the horizon's edge
-    const ringGeo = new THREE.RingGeometry(6.2, 6.6, 96);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xf4f1ea,
+    // thin bright cusp right at the horizon's edge — one aligned to the
+    // disk's plane, one aligned to the halo's plane
+    const cuspGeo = new THREE.RingGeometry(5.1, 5.35, 96);
+    const cuspMat = new THREE.MeshBasicMaterial({
+      color: 0xfff4e0,
       transparent: true,
       opacity: 0.9,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    const photonRing = new THREE.Mesh(ringGeo, ringMat);
-    photonRing.rotation.x = Math.PI / 2;
-    group.add(photonRing);
+    const cusp = new THREE.Mesh(cuspGeo, cuspMat);
+    cusp.rotation.x = Math.PI / 2; // matches the disk's flat orientation
+    group.add(cusp);
+    const cuspVertical = new THREE.Mesh(cuspGeo, cuspMat); // matches the halo's orientation (unrotated)
+    group.add(cuspVertical);
 
-    // ---------------------------- accretion disk ----------------------------
-    const DISK_COUNT = 9000;
-    const positions = new Float32Array(DISK_COUNT * 3);
-    const colors = new Float32Array(DISK_COUNT * 3);
-    const speeds = new Float32Array(DISK_COUNT);
-    const radii = new Float32Array(DISK_COUNT);
-    const angles = new Float32Array(DISK_COUNT);
-
-    const hot = new THREE.Color("#f4f1ea");
-    const mid = new THREE.Color("#c8ff3d");
-    const cool = new THREE.Color("#6d4bff");
-
-    for (let i = 0; i < DISK_COUNT; i++) {
-      const r = 7 + Math.pow(Math.random(), 1.6) * 26;
-      const a = Math.random() * Math.PI * 2;
-      radii[i] = r;
-      angles[i] = a;
-      // inner particles orbit faster — rough Keplerian falloff
-      speeds[i] = 1.4 / Math.sqrt(r);
-
-      const y = (Math.random() - 0.5) * (1.2 / (r * 0.15 + 1));
-      positions[i * 3] = Math.cos(a) * r;
-      positions[i * 3 + 1] = y;
-      positions[i * 3 + 2] = Math.sin(a) * r;
-
-      const tt = Math.min((r - 7) / 26, 1);
-      const col = tt < 0.5 ? hot.clone().lerp(mid, tt / 0.5) : mid.clone().lerp(cool, (tt - 0.5) / 0.5);
-      colors[i * 3] = col.r;
-      colors[i * 3 + 1] = col.g;
-      colors[i * 3 + 2] = col.b;
-    }
-
-    const diskGeo = new THREE.BufferGeometry();
-    diskGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    diskGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-
-    const diskTexture = (() => {
-      const size = 64;
-      const c = document.createElement("canvas");
-      c.width = c.height = size;
-      const g = c.getContext("2d")!;
-      const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-      grad.addColorStop(0, "rgba(255,255,255,1)");
-      grad.addColorStop(1, "rgba(255,255,255,0)");
-      g.fillStyle = grad;
-      g.fillRect(0, 0, size, size);
-      return new THREE.CanvasTexture(c);
-    })();
-
-    const diskMat = new THREE.PointsMaterial({
-      size: 0.5,
-      map: diskTexture,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      sizeAttenuation: true,
-    });
-    const disk = new THREE.Points(diskGeo, diskMat);
-    group.add(disk);
-
-    // faint outer glow behind everything
-    const glowGeo = new THREE.SphereGeometry(9, 32, 32);
+    // faint ambient glow behind everything
+    const glowGeo = new THREE.SphereGeometry(7, 32, 32);
     const glowMat = new THREE.MeshBasicMaterial({
-      color: 0x6d4bff,
+      color: 0xffb066,
       transparent: true,
-      opacity: 0.12,
+      opacity: 0.08,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
     const glow = new THREE.Mesh(glowGeo, glowMat);
     group.add(glow);
+
+    // ---------------------------- sparkle overlay ----------------------------
+    const SPARK_COUNT = 500;
+    const sparkPositions = new Float32Array(SPARK_COUNT * 3);
+    const sparkRadii = new Float32Array(SPARK_COUNT);
+    const sparkAngles = new Float32Array(SPARK_COUNT);
+    const sparkSpeeds = new Float32Array(SPARK_COUNT);
+    const sparkVertical = new Uint8Array(SPARK_COUNT);
+    for (let i = 0; i < SPARK_COUNT; i++) {
+      const r = 5.5 + Math.random() * 10;
+      sparkRadii[i] = r;
+      sparkAngles[i] = Math.random() * Math.PI * 2;
+      sparkSpeeds[i] = 0.9 / Math.sqrt(r);
+      sparkVertical[i] = Math.random() > 0.5 ? 1 : 0;
+    }
+    const sparkGeo = new THREE.BufferGeometry();
+    sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPositions, 3));
+    const sparkTexture = (() => {
+      const size = 32;
+      const c = document.createElement("canvas");
+      c.width = c.height = size;
+      const g = c.getContext("2d")!;
+      const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+      grad.addColorStop(0, "rgba(255,248,230,1)");
+      grad.addColorStop(1, "rgba(255,248,230,0)");
+      g.fillStyle = grad;
+      g.fillRect(0, 0, size, size);
+      return new THREE.CanvasTexture(c);
+    })();
+    const sparkMat = new THREE.PointsMaterial({
+      size: 0.35,
+      map: sparkTexture,
+      color: 0xfff2d8,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    });
+    const sparks = new THREE.Points(sparkGeo, sparkMat);
+    group.add(sparks);
 
     // ---------------------------- interaction ----------------------------
     const reduced = reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -164,27 +247,37 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
     let raf = 0;
     let inView = true;
     let t = 0;
-    const posAttr = diskGeo.getAttribute("position") as THREE.BufferAttribute;
+    const sparkPosAttr = sparkGeo.getAttribute("position") as THREE.BufferAttribute;
 
     const renderOnce = () => renderer.render(scene, camera);
 
     const frame = () => {
-      t += 0.01;
+      t += 0.008;
       pointer.x += (pointer.tx - pointer.x) * 0.04;
       pointer.y += (pointer.ty - pointer.y) * 0.04;
 
-      for (let i = 0; i < DISK_COUNT; i++) {
-        const a = angles[i] + t * speeds[i];
-        const r = radii[i];
-        posAttr.setX(i, Math.cos(a) * r);
-        posAttr.setZ(i, Math.sin(a) * r);
-      }
-      posAttr.needsUpdate = true;
+      // slow counter-rotation of the two rings sells the "independent
+      // orbiting material" read rather than a single rigid solid
+      disk.rotation.z = t * 0.06;
+      halo.rotation.z = -t * 0.05;
 
-      ringMat.opacity = 0.75 + Math.sin(t * 2) * 0.1;
-      group.rotation.z = pointer.x * 0.08;
-      group.rotation.x = -0.55 + pointer.y * 0.06 - scrollRef.current * 0.25;
-      camera.position.y = 14 - scrollRef.current * 10;
+      for (let i = 0; i < SPARK_COUNT; i++) {
+        const a = sparkAngles[i] + t * sparkSpeeds[i];
+        const r = sparkRadii[i];
+        if (sparkVertical[i]) {
+          sparkPosAttr.setXYZ(i, Math.cos(a) * r, Math.sin(a) * r, 0);
+        } else {
+          sparkPosAttr.setXYZ(i, Math.cos(a) * r, 0, Math.sin(a) * r);
+        }
+      }
+      sparkPosAttr.needsUpdate = true;
+
+      const pulse = 0.85 + Math.sin(t * 2.4) * 0.1;
+      cuspMat.opacity = pulse;
+
+      group.rotation.z = pointer.x * 0.06;
+      group.rotation.x = -0.42 + pointer.y * 0.05 - scrollRef.current * 0.3;
+      camera.position.y = 14 - scrollRef.current * 11;
       camera.lookAt(0, 0, 0);
 
       renderOnce();
@@ -213,15 +306,21 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
       observer.disconnect();
       window.removeEventListener("resize", resize);
       window.removeEventListener("pointermove", onPointerMove);
-      horizonGeo.dispose();
-      horizonMat.dispose();
-      ringGeo.dispose();
-      ringMat.dispose();
       diskGeo.dispose();
       diskMat.dispose();
       diskTexture.dispose();
+      haloGeo.dispose();
+      haloMat.dispose();
+      haloTexture.dispose();
+      horizonGeo.dispose();
+      horizonMat.dispose();
+      cuspGeo.dispose();
+      cuspMat.dispose();
       glowGeo.dispose();
       glowMat.dispose();
+      sparkGeo.dispose();
+      sparkMat.dispose();
+      sparkTexture.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
