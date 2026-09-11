@@ -23,7 +23,7 @@ export default function Contact() {
             <a
               href={mailHref}
               data-cursor="Email"
-              className="group font-display mt-8 inline-block text-2xl font-medium md:text-4xl"
+              className="group font-display mt-8 inline-block text-2xl font-medium transition-[text-shadow] duration-300 hover:drop-shadow-[0_0_18px_var(--color-accent)] md:text-4xl"
             >
               <span className="relative">
                 {site.email}

@@ -15,7 +15,7 @@ export default function Journey() {
       <div className="border-bone/10 relative mt-16 border-l pl-8 md:pl-12">
         {journeySteps.map((s, i) => (
           <FadeUp key={s.year} delay={i * 0.05} className="relative pb-14 last:pb-0">
-            <span className="bg-accent absolute top-1.5 -left-[calc(2rem+4px)] h-2 w-2 rounded-full md:-left-[calc(3rem+4px)]" />
+            <span className="bg-accent absolute top-1.5 -left-[calc(2rem+4px)] h-2 w-2 rounded-full shadow-[0_0_12px_2px_var(--color-accent)] md:-left-[calc(3rem+4px)]" />
             <p className="text-bone/40 font-mono text-xs tracking-[0.2em] uppercase">{s.year}</p>
             <h3 className="font-display mt-2 text-2xl font-medium md:text-3xl">{s.role}</h3>
             <p className="text-bone/45 mt-1 text-sm">{s.org}</p>

@@ -24,7 +24,7 @@ export default function Work() {
               <FadeUp className="md:col-span-5" delay={0.05}>
                 <Magnetic strength={0.15}>
                   <h3
-                    className="font-display group-hover:text-accent text-3xl font-medium transition-colors md:text-4xl"
+                    className="font-display group-hover:text-accent text-3xl font-medium transition-all group-hover:drop-shadow-[0_0_16px_var(--color-accent)] md:text-4xl"
                     data-cursor="View"
                   >
                     {p.title}

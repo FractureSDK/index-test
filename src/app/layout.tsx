@@ -3,6 +3,8 @@ import { site } from "@/config/site";
 import PwaRegister from "@/components/PwaRegister";
 import SmoothScroll from "@/components/SmoothScroll";
 import Cursor from "@/components/Cursor";
+import Preloader from "@/components/Preloader";
+import ScrollProgress from "@/components/ScrollProgress";
 
 // Self-hosted (via @fontsource) rather than next/font/google: no runtime
 // or build-time dependency on fonts.googleapis.com, which matters here
@@ -63,7 +65,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
         <PwaRegister />
         <Cursor />
-        <SmoothScroll>{children}</SmoothScroll>
+        <ScrollProgress />
+        <Preloader>
+          <SmoothScroll>{children}</SmoothScroll>
+        </Preloader>
       </body>
     </html>
   );

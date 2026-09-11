@@ -27,7 +27,7 @@ export default function Skills() {
       </div>
 
       <div className="border-bone/10 mt-16 overflow-hidden border-y py-6">
-        <div className="marquee font-display text-bone/20 flex w-max gap-10 text-3xl md:text-5xl">
+        <div className="marquee font-display text-bone/20 flex w-max gap-10 text-3xl hover:[animation-play-state:paused] md:text-5xl">
           {[...tools, ...tools].map((t, i) => (
             <span key={i} className="whitespace-nowrap">
               {t} <span className="text-accent">·</span>

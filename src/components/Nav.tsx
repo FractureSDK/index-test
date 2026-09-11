@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import Magnetic from "./Magnetic";
 import { navLinks } from "@/content/nav";
 import { site } from "@/config/site";
+import { useAppReady } from "@/hooks/useAppReady";
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [time, setTime] = useState("");
+  const ready = useAppReady();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 60);
@@ -38,18 +40,26 @@ export default function Nav() {
   return (
     <>
       <header
-        className={`fixed inset-x-0 top-0 z-50 flex items-center justify-between px-6 py-5 transition-colors duration-500 md:px-10 ${
+        className={`fixed inset-x-0 top-0 z-50 flex items-center justify-between px-6 py-5 transition-all duration-500 md:px-10 ${
           scrolled ? "bg-ink/80 backdrop-blur-md" : ""
-        }`}
+        } ${ready ? "translate-y-0 opacity-100" : "-translate-y-4 opacity-0"}`}
       >
-        <a href="#top" className="font-display text-sm font-semibold tracking-tight" data-cursor="Home">
+        <a
+          href="#top"
+          className="hover:text-accent font-display text-sm font-semibold tracking-tight transition-colors"
+          data-cursor="Home"
+        >
           {site.name}
         </a>
 
         <nav className="font-body text-bone/70 hidden items-center gap-8 text-sm md:flex">
           {navLinks.map((l) => (
             <Magnetic key={l.href} strength={0.3}>
-              <a href={l.href} className="hover:text-bone transition-colors" data-cursor={l.label}>
+              <a
+                href={l.href}
+                className="hover:text-bone relative transition-all hover:drop-shadow-[0_0_8px_var(--color-accent)]"
+                data-cursor={l.label}
+              >
                 <span className="text-bone/30 mr-1 text-[10px]">{l.n}</span>
                 {l.label}
               </a>

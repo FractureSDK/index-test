@@ -17,18 +17,27 @@ export function SplitReveal({
   className = "",
   stagger = 0.035,
   start = "top 85%",
+  play,
 }: {
   text: string;
   as?: ElementType;
   className?: string;
   stagger?: number;
   start?: string;
+  /**
+   * When provided, ignores ScrollTrigger and instead plays once this flips
+   * from false to true (used by the Hero, which is already in view when
+   * the preloader is covering it — a scroll trigger would fire instantly
+   * and finish before the preloader even lifts).
+   */
+  play?: boolean;
 }) {
   const ref = useRef<HTMLElement>(null);
   const reducedMotion = usePrefersReducedMotion();
 
   useEffect(() => {
     if (reducedMotion) return;
+    if (play === false) return;
     const el = ref.current;
     if (!el) return;
     const words = el.querySelectorAll<HTMLElement>("[data-word-inner]");
@@ -42,13 +51,13 @@ export function SplitReveal({
           duration: 0.9,
           ease: "power4.out",
           stagger,
-          scrollTrigger: { trigger: el, start },
+          scrollTrigger: play === undefined ? { trigger: el, start } : undefined,
         }
       );
     }, el);
 
     return () => ctx.revert();
-  }, [reducedMotion, stagger, start]);
+  }, [reducedMotion, stagger, start, play]);
 
   if (reducedMotion) {
     return <Tag className={className}>{text}</Tag>;
@@ -75,29 +84,40 @@ export function FadeUp({
   delay = 0,
   y = 32,
   start = "top 88%",
+  play,
 }: {
   children: ReactNode;
   className?: string;
   delay?: number;
   y?: number;
   start?: string;
+  /** See SplitReveal — same manual-trigger escape hatch, for Hero content. */
+  play?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
 
   useEffect(() => {
     if (reducedMotion) return;
+    if (play === false) return;
     const el = ref.current;
     if (!el) return;
     const ctx = gsap.context(() => {
       gsap.fromTo(
         el,
         { opacity: 0, y },
-        { opacity: 1, y: 0, duration: 0.9, delay, ease: "power3.out", scrollTrigger: { trigger: el, start } }
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.9,
+          delay,
+          ease: "power3.out",
+          scrollTrigger: play === undefined ? { trigger: el, start } : undefined,
+        }
       );
     }, el);
     return () => ctx.revert();
-  }, [reducedMotion, delay, y, start]);
+  }, [reducedMotion, delay, y, start, play]);
 
   return (
     <div ref={ref} className={className} style={reducedMotion ? undefined : { opacity: 0 }}>
