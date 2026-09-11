@@ -2,20 +2,33 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 /**
- * A "Gargantua"-style lensed black hole. The iconic look isn't a particle
- * cloud — it's a flat accretion disk PLUS a second ring left facing the
- * camera (unrotated) so it reads as a halo wrapping the poles, which is
- * the classic cheat for faking gravitational lensing without a real
- * ray-marched shader: two rings, same radius, perpendicular to each other,
- * sharing one tilt.
+ * A "Gargantua"-style lensed black hole, built around three ideas from
+ * https://www.cnblogs.com/jakezhang/p/20978598 (a writeup of a four-round
+ * Three.js black hole project):
  *
- * Both rings use a procedurally painted canvas texture (radial brightness
- * falloff + angular turbulence + a one-sided brightness bias standing in
- * for relativistic Doppler beaming) rather than solid color, so they read
- * as wispy/fibrous rather than a flat gradient ring.
+ *  1. Particles over flat geometry for the accretion disk — an "organic,
+ *     non-geometric" plasma reads as more physical than a textured panel.
+ *  2. Real per-particle Doppler shift (dot of orbital velocity direction
+ *     with the view direction) plus layered-sine turbulence standing in
+ *     for fBm, instead of a single baked "brighter on one side" texture.
+ *  3. HDR-ish highlight colors + UnrealBloomPass + ACES Filmic tone
+ *     mapping, so the hottest particles genuinely glow instead of just
+ *     being a brighter flat color.
+ *
+ * Scoped down from the article's target (500k particles, GPU vertex-shader
+ * motion, a volumetric-light pass, full geodesic ray-marched lensing):
+ * this is a decorative hero background, not a dedicated visualization, so
+ * it runs on ~13k particles with CPU-computed motion/color and skips the
+ * volumetric pass and true ray-traced lensing — the two perpendicular
+ * rings (disk lying flat, halo left facing the camera) are the same
+ * "fake the lensing" trick as before, now populated with particles
+ * instead of a textured mesh.
  */
 export default function BlackHoleScene({ className = "" }: { className?: string }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -45,110 +58,22 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
       powerPreference: "high-performance",
     });
     renderer.setClearColor(0x000000, 0);
+    // ACES Filmic: keeps the bloom-fed highlights (photon ring, hot
+    // particles) from clipping to flat white while still letting the
+    // dim outer disk keep some gradient — the article's round-4 pick
+    // over Reinhard (crushes highlights) for the same reason.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
     mount.appendChild(renderer.domElement);
 
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.5, 0.55, 0.62);
+    composer.addPass(bloomPass);
+
     const group = new THREE.Group();
-    group.rotation.x = -0.42; // moderate tilt, close to the reference angle
+    group.rotation.x = -0.42;
     scene.add(group);
-
-    // ---------------------------- procedural disk texture ----------------------------
-    // RingGeometry UVs: v (0→1) runs inner→outer radius, u (0→1) runs around
-    // the angle — so vertical position in this canvas is radial distance,
-    // horizontal position is angle.
-    function makeDiskTexture(beamBiasDeg: number) {
-      const W = 512;
-      const H = 64;
-      const canvas = document.createElement("canvas");
-      canvas.width = W;
-      canvas.height = H;
-      const ctx = canvas.getContext("2d")!;
-      const img = ctx.createImageData(W, H);
-      const bias = (beamBiasDeg * Math.PI) / 180;
-
-      const hot = [255, 248, 235]; // near-white
-      const gold = [255, 205, 130];
-      const amber = [230, 120, 55];
-      const dim = [90, 40, 25];
-
-      const lerp3 = (a: number[], b: number[], t: number) => a.map((v, i) => v + (b[i] - v) * t);
-
-      for (let y = 0; y < H; y++) {
-        const v = y / (H - 1); // 0 = inner edge, 1 = outer edge
-        // radial brightness: hottest near the inner edge, falling off outward
-        const radialFalloff = Math.pow(1 - v, 1.6);
-        for (let x = 0; x < W; x++) {
-          const u = x / (W - 1);
-          const angle = u * Math.PI * 2;
-
-          // turbulence: a handful of overlapping sine waves at different
-          // angular frequencies so brightness varies unevenly around the
-          // ring, reads as wisps/streaks rather than a uniform band
-          const noise =
-            0.5 +
-            0.22 * Math.sin(angle * 5 + v * 9) +
-            0.16 * Math.sin(angle * 11 - v * 5 + 2.1) +
-            0.12 * Math.sin(angle * 23 + v * 3 + 4.4);
-
-          // relativistic-beaming stand-in: brighter on one side
-          const beam = 0.55 + 0.45 * Math.cos(angle - bias);
-
-          let brightness = radialFalloff * Math.max(noise, 0) * beam;
-          brightness = Math.max(0, Math.min(1, brightness));
-
-          // gap streaks: occasionally darken a thin angular band so
-          // individual filaments separate instead of a solid wash
-          const gap = Math.sin(angle * 37 + v * 13);
-          if (gap > 0.94) brightness *= 0.25;
-
-          let color: number[];
-          if (brightness > 0.75) color = lerp3(gold, hot, (brightness - 0.75) / 0.25);
-          else if (brightness > 0.4) color = lerp3(amber, gold, (brightness - 0.4) / 0.35);
-          else color = lerp3(dim, amber, brightness / 0.4);
-
-          const i = (y * W + x) * 4;
-          img.data[i] = color[0];
-          img.data[i + 1] = color[1];
-          img.data[i + 2] = color[2];
-          img.data[i + 3] = Math.round(brightness * 255);
-        }
-      }
-      ctx.putImageData(img, 0, 0);
-      const tex = new THREE.CanvasTexture(canvas);
-      tex.wrapS = THREE.RepeatWrapping;
-      tex.needsUpdate = true;
-      return tex;
-    }
-
-    const diskTexture = makeDiskTexture(35);
-    const haloTexture = makeDiskTexture(35);
-
-    const diskMat = new THREE.MeshBasicMaterial({
-      map: diskTexture,
-      transparent: true,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const haloMat = new THREE.MeshBasicMaterial({
-      map: haloTexture,
-      transparent: true,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      opacity: 0.85,
-    });
-
-    // main disk — laid flat (in the group's local XZ plane)
-    const diskGeo = new THREE.RingGeometry(5.4, 17, 128, 1);
-    const disk = new THREE.Mesh(diskGeo, diskMat);
-    disk.rotation.x = Math.PI / 2;
-    group.add(disk);
-
-    // halo — same ring, left facing the camera (no extra rotation), same
-    // radius range but tighter, so it wraps the sphere's poles
-    const haloGeo = new THREE.RingGeometry(5.2, 9.5, 128, 1);
-    const halo = new THREE.Mesh(haloGeo, haloMat);
-    group.add(halo);
 
     // ---------------------------- event horizon ----------------------------
     const horizonGeo = new THREE.SphereGeometry(5.1, 48, 48);
@@ -156,75 +81,135 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
     const horizon = new THREE.Mesh(horizonGeo, horizonMat);
     group.add(horizon);
 
-    // thin bright cusp right at the horizon's edge — one aligned to the
-    // disk's plane, one aligned to the halo's plane
-    const cuspGeo = new THREE.RingGeometry(5.1, 5.35, 96);
-    const cuspMat = new THREE.MeshBasicMaterial({
-      color: 0xfff4e0,
+    // ---------------------------- photon ring (soft glow, not a hard edge) ----------------------------
+    // A radial gaussian falloff around the photon radius (~1.5x the
+    // horizon radius, per the article), painted into a texture rather
+    // than a flat-alpha ring — this is the "round 1 → round 2" fix for
+    // hard edges applied specifically to the ring boundary.
+    function makeGlowRingTexture() {
+      const W = 4;
+      const H = 128;
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d")!;
+      const img = ctx.createImageData(W, H);
+      const photonV = 0.22; // where in the ring's inner→outer span the photon radius sits
+      const sharpness = 18; // ringSharpness from the article
+      for (let y = 0; y < H; y++) {
+        const v = y / (H - 1);
+        const glow = Math.exp(-Math.pow((v - photonV) * sharpness, 2)) + Math.exp(-Math.pow(v * 6, 2)) * 0.4;
+        const b = Math.min(1, glow);
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          // slightly HDR near the peak so bloom picks it out distinctly
+          img.data[i] = Math.min(255, 255 * (0.98 + b * 0.4));
+          img.data[i + 1] = Math.min(255, 255 * (0.94 + b * 0.3));
+          img.data[i + 2] = Math.min(255, 255 * (0.85 + b * 0.15));
+          img.data[i + 3] = Math.round(b * 255);
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      return tex;
+    }
+    const ringTexture = makeGlowRingTexture();
+    const ringMat = new THREE.MeshBasicMaterial({
+      map: ringTexture,
       transparent: true,
-      opacity: 0.9,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    const cusp = new THREE.Mesh(cuspGeo, cuspMat);
-    cusp.rotation.x = Math.PI / 2; // matches the disk's flat orientation
-    group.add(cusp);
-    const cuspVertical = new THREE.Mesh(cuspGeo, cuspMat); // matches the halo's orientation (unrotated)
-    group.add(cuspVertical);
+    const ringGeo = new THREE.RingGeometry(4.9, 8.5, 128, 1);
+    const photonRingFlat = new THREE.Mesh(ringGeo, ringMat);
+    photonRingFlat.rotation.x = Math.PI / 2;
+    group.add(photonRingFlat);
+    const photonRingVertical = new THREE.Mesh(ringGeo, ringMat);
+    group.add(photonRingVertical);
 
     // faint ambient glow behind everything
     const glowGeo = new THREE.SphereGeometry(7, 32, 32);
     const glowMat = new THREE.MeshBasicMaterial({
       color: 0xffb066,
       transparent: true,
-      opacity: 0.08,
+      opacity: 0.07,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    const glow = new THREE.Mesh(glowGeo, glowMat);
-    group.add(glow);
+    group.add(new THREE.Mesh(glowGeo, glowMat));
 
-    // ---------------------------- sparkle overlay ----------------------------
-    const SPARK_COUNT = 500;
-    const sparkPositions = new Float32Array(SPARK_COUNT * 3);
-    const sparkRadii = new Float32Array(SPARK_COUNT);
-    const sparkAngles = new Float32Array(SPARK_COUNT);
-    const sparkSpeeds = new Float32Array(SPARK_COUNT);
-    const sparkVertical = new Uint8Array(SPARK_COUNT);
-    for (let i = 0; i < SPARK_COUNT; i++) {
-      const r = 5.5 + Math.random() * 10;
-      sparkRadii[i] = r;
-      sparkAngles[i] = Math.random() * Math.PI * 2;
-      sparkSpeeds[i] = 0.9 / Math.sqrt(r);
-      sparkVertical[i] = Math.random() > 0.5 ? 1 : 0;
+    // ---------------------------- accretion disk: particles, not a panel ----------------------------
+    const isMobile = window.matchMedia("(max-width: 1279px)").matches;
+    const COUNT = isMobile ? 6000 : 13000;
+    const INNER_R = 6.2;
+    const OUTER_R = 19;
+
+    const radii = new Float32Array(COUNT);
+    const baseAngle = new Float32Array(COUNT);
+    const vertical = new Uint8Array(COUNT); // orientation: flat disk vs. camera-facing halo
+    const seedA = new Float32Array(COUNT);
+    const seedB = new Float32Array(COUNT);
+    const positions = new Float32Array(COUNT * 3);
+    const colors = new Float32Array(COUNT * 3);
+
+    for (let i = 0; i < COUNT; i++) {
+      radii[i] = INNER_R + Math.pow(Math.random(), 1.7) * (OUTER_R - INNER_R);
+      baseAngle[i] = Math.random() * Math.PI * 2;
+      // ~65% form the flat disk, ~35% populate the vertical halo loop —
+      // matches the reference's proportion of a wide flared disk plus a
+      // tighter bright halo
+      vertical[i] = Math.random() < 0.35 ? 1 : 0;
+      seedA[i] = Math.random();
+      seedB[i] = Math.random();
     }
-    const sparkGeo = new THREE.BufferGeometry();
-    sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPositions, 3));
+
+    const diskGeo = new THREE.BufferGeometry();
+    diskGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    diskGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
     const sparkTexture = (() => {
       const size = 32;
       const c = document.createElement("canvas");
       c.width = c.height = size;
       const g = c.getContext("2d")!;
       const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-      grad.addColorStop(0, "rgba(255,248,230,1)");
-      grad.addColorStop(1, "rgba(255,248,230,0)");
+      grad.addColorStop(0, "rgba(255,255,255,1)");
+      grad.addColorStop(1, "rgba(255,255,255,0)");
       g.fillStyle = grad;
       g.fillRect(0, 0, size, size);
       return new THREE.CanvasTexture(c);
     })();
-    const sparkMat = new THREE.PointsMaterial({
-      size: 0.35,
+
+    const diskMat = new THREE.PointsMaterial({
+      size: 0.5,
       map: sparkTexture,
-      color: 0xfff2d8,
+      vertexColors: true,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.9,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       sizeAttenuation: true,
     });
-    const sparks = new THREE.Points(sparkGeo, sparkMat);
-    group.add(sparks);
+    const diskPoints = new THREE.Points(diskGeo, diskMat);
+    group.add(diskPoints);
+
+    // temperature ramp by radius (hot near the horizon, cooling outward)
+    const hot = new THREE.Color("#fff8eb");
+    const gold = new THREE.Color("#ffcd82");
+    const amber = new THREE.Color("#e67837");
+    const dim = new THREE.Color("#5a2819");
+    const approachTint = new THREE.Color("#eaf3ff"); // slight blue-white for the Doppler-brightened side
+    const recedeTint = new THREE.Color("#7a2010"); // deep red for the dimmed, receding side
+    const tmpColor = new THREE.Color();
+
+    function tempColor(t: number, out: THREE.Color) {
+      if (t < 0.4) out.copy(dim).lerp(amber, t / 0.4);
+      else if (t < 0.75) out.copy(amber).lerp(gold, (t - 0.4) / 0.35);
+      else out.copy(gold).lerp(hot, (t - 0.75) / 0.25);
+      return out;
+    }
 
     // ---------------------------- interaction ----------------------------
     const reduced = reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -240,45 +225,107 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
       const h = mount.clientHeight;
       camera.aspect = w / Math.max(h, 1);
       camera.updateProjectionMatrix();
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      const pr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+      renderer.setPixelRatio(pr);
       renderer.setSize(w, h, false);
+      composer.setSize(w, h);
+      bloomPass.setSize(w, h);
     };
 
     let raf = 0;
     let inView = true;
     let t = 0;
-    const sparkPosAttr = sparkGeo.getAttribute("position") as THREE.BufferAttribute;
+    const posAttr = diskGeo.getAttribute("position") as THREE.BufferAttribute;
+    const colAttr = diskGeo.getAttribute("color") as THREE.BufferAttribute;
 
-    const renderOnce = () => renderer.render(scene, camera);
+    const renderOnce = () => composer.render();
 
     const frame = () => {
-      t += 0.008;
+      t += 0.006;
       pointer.x += (pointer.tx - pointer.x) * 0.04;
       pointer.y += (pointer.ty - pointer.y) * 0.04;
-
-      // slow counter-rotation of the two rings sells the "independent
-      // orbiting material" read rather than a single rigid solid
-      disk.rotation.z = t * 0.06;
-      halo.rotation.z = -t * 0.05;
-
-      for (let i = 0; i < SPARK_COUNT; i++) {
-        const a = sparkAngles[i] + t * sparkSpeeds[i];
-        const r = sparkRadii[i];
-        if (sparkVertical[i]) {
-          sparkPosAttr.setXYZ(i, Math.cos(a) * r, Math.sin(a) * r, 0);
-        } else {
-          sparkPosAttr.setXYZ(i, Math.cos(a) * r, 0, Math.sin(a) * r);
-        }
-      }
-      sparkPosAttr.needsUpdate = true;
-
-      const pulse = 0.85 + Math.sin(t * 2.4) * 0.1;
-      cuspMat.opacity = pulse;
 
       group.rotation.z = pointer.x * 0.06;
       group.rotation.x = -0.42 + pointer.y * 0.05 - scrollRef.current * 0.3;
       camera.position.y = 14 - scrollRef.current * 11;
       camera.lookAt(0, 0, 0);
+      group.updateMatrixWorld();
+
+      // camera position in the group's local space, for a per-frame (not
+      // per-particle) Doppler view-direction reference
+      const inv = group.matrixWorld.clone().invert();
+      const localCam = camera.position.clone().applyMatrix4(inv);
+
+      for (let i = 0; i < COUNT; i++) {
+        const r = radii[i];
+        const angularVelocity = 1.5 / Math.pow(r, 1.5); // Keplerian falloff
+        const angle = baseAngle[i] + t * angularVelocity;
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+
+        let px: number, py: number, pz: number, vx: number, vy: number, vz: number;
+        if (vertical[i]) {
+          px = cosA * r;
+          py = sinA * r;
+          pz = 0;
+          vx = -sinA;
+          vy = cosA;
+          vz = 0;
+        } else {
+          px = cosA * r;
+          py = 0;
+          pz = sinA * r;
+          vx = -sinA;
+          vy = 0;
+          vz = cosA;
+        }
+        posAttr.setXYZ(i, px, py, pz);
+
+        // view direction from particle to camera (both in local space)
+        let dx = localCam.x - px;
+        let dy = localCam.y - py;
+        let dz = localCam.z - pz;
+        const dl = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+        dx /= dl;
+        dy /= dl;
+        dz /= dl;
+        const approach = vx * dx + vy * dy + vz * dz; // [-1, 1]
+
+        // layered-sine turbulence standing in for fBm — a few
+        // different-frequency waves over angle/radius/time
+        const flicker =
+          0.62 +
+          0.2 * Math.sin(angle * 4 + t * 4 + seedA[i] * 6.28) +
+          0.14 * Math.sin(angle * 9 - t * 2.3 + seedB[i] * 6.28) +
+          0.1 * Math.sin(r * 0.7 + t * 1.6);
+
+        const radialT = 1 - Math.min(Math.max((r - INNER_R) / (OUTER_R - INNER_R), 0), 1);
+        tempColor(radialT, tmpColor);
+
+        const shiftStrength = 0.85;
+        const shift = approach * shiftStrength;
+        if (shift > 0) tmpColor.lerp(approachTint, Math.min(shift, 1) * 0.55);
+        else tmpColor.lerp(recedeTint, Math.min(-shift, 1) * 0.5);
+
+        const brightness =
+          Math.max(0, flicker) * (1 + Math.max(shift, 0) * 1.3) * (1 + Math.min(shift, 0) * 0.5);
+        // hottest, most Doppler-brightened particles push past 1.0 — with
+        // ACES tone mapping + bloom this reads as genuine HDR glow rather
+        // than clipping to flat white
+        const boost = radialT > 0.85 && shift > 0.3 ? 1.6 : 1;
+
+        colAttr.setXYZ(
+          i,
+          tmpColor.r * brightness * boost,
+          tmpColor.g * brightness * boost,
+          tmpColor.b * brightness * boost
+        );
+      }
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+
+      const pulse = 0.9 + Math.sin(t * 2.2) * 0.08;
+      ringMat.opacity = pulse;
 
       renderOnce();
       if (inView && !reduced) raf = requestAnimationFrame(frame);
@@ -306,21 +353,17 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
       observer.disconnect();
       window.removeEventListener("resize", resize);
       window.removeEventListener("pointermove", onPointerMove);
-      diskGeo.dispose();
-      diskMat.dispose();
-      diskTexture.dispose();
-      haloGeo.dispose();
-      haloMat.dispose();
-      haloTexture.dispose();
       horizonGeo.dispose();
       horizonMat.dispose();
-      cuspGeo.dispose();
-      cuspMat.dispose();
+      ringGeo.dispose();
+      ringMat.dispose();
+      ringTexture.dispose();
       glowGeo.dispose();
       glowMat.dispose();
-      sparkGeo.dispose();
-      sparkMat.dispose();
+      diskGeo.dispose();
+      diskMat.dispose();
       sparkTexture.dispose();
+      composer.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
