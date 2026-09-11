@@ -5,30 +5,35 @@ import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 /**
- * A "Gargantua"-style lensed black hole, built around three ideas from
- * https://www.cnblogs.com/jakezhang/p/20978598 (a writeup of a four-round
- * Three.js black hole project):
+ * A real per-pixel geodesic ray-marcher, not a particle trick — ported
+ * from the technique in zhiqiangme/Black_Hole (github.com/zhiqiangme/Black_Hole),
+ * itself built on the "starless" weak-field approximation for bent null
+ * geodesics around a Schwarzschild black hole (a = -1.5·h²·r / |r|⁵, where
+ * h = |r×v| is the conserved specific angular momentum). Every camera ray
+ * is integrated step by step; the lensed disk arcs above/below the shadow,
+ * the photon ring, and the disk's own silhouette all fall out of that one
+ * integration loop rather than being separately faked with extra meshes.
  *
- *  1. Particles over flat geometry for the accretion disk — an "organic,
- *     non-geometric" plasma reads as more physical than a textured panel.
- *  2. Real per-particle Doppler shift (dot of orbital velocity direction
- *     with the view direction) plus layered-sine turbulence standing in
- *     for fBm, instead of a single baked "brighter on one side" texture.
- *  3. HDR-ish highlight colors + UnrealBloomPass + ACES Filmic tone
- *     mapping, so the hottest particles genuinely glow instead of just
- *     being a brighter flat color.
- *
- * Scoped down from the article's target (500k particles, GPU vertex-shader
- * motion, a volumetric-light pass, full geodesic ray-marched lensing):
- * this is a decorative hero background, not a dedicated visualization, so
- * it runs on ~13k particles with CPU-computed motion/color and skips the
- * volumetric pass and true ray-traced lensing — the two perpendicular
- * rings (disk lying flat, halo left facing the camera) are the same
- * "fake the lensing" trick as before, now populated with particles
- * instead of a textured mesh.
+ * Adapted for this use (a decorative Hero background inside a scrollable
+ * page), not reproduced as-is:
+ *  - No OrbitControls drag-to-orbit and no scroll-wheel-driven "plunge into
+ *    the horizon" — this canvas sits inside a normal scrolling portfolio
+ *    page, so hijacking the wheel isn't an option. Orbit is a slow
+ *    auto-rotate plus subtle pointer parallax instead, and disk intensity/
+ *    ring gain ramp gently with normal page scroll rather than owning it.
+ *  - No background starfield/nebula sampling for escaped rays — alpha is 0
+ *    there instead, so the site's own dark background shows through
+ *    (matches an earlier decision in this project to drop starfield
+ *    dressing). Captured rays (fell past the horizon) render opaque black;
+ *    only rays that actually cross the disk plane accumulate color.
+ *  - Step count / internal render scale taper by breakpoint, consistent
+ *    with this project's existing mobile-downgrade convention (this
+ *    component is only ever mounted on desktop to begin with — see
+ *    HeroBackground.tsx).
  */
 export default function BlackHoleScene({ className = "" }: { className?: string }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -47,187 +52,239 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
     const mount = mountRef.current;
     if (!mount) return;
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
-    camera.position.set(0, 14, 50);
-    camera.lookAt(0, 0, 0);
+    const reduced = reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const tier = window.innerWidth < 1280 ? "compact" : "full";
+    const maxSteps = tier === "compact" ? 170 : 280;
+    const renderScale = tier === "compact" ? 0.55 : 0.8;
 
+    // ---------------------------- renderer + fullscreen quad ----------------------------
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
-      antialias: true,
+      antialias: false,
       powerPreference: "high-performance",
     });
-    renderer.setClearColor(0x000000, 0);
-    // ACES Filmic: keeps the bloom-fed highlights (photon ring, hot
-    // particles) from clipping to flat white while still letting the
-    // dim outer disk keep some gradient — the article's round-4 pick
-    // over Reinhard (crushes highlights) for the same reason.
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.05;
     mount.appendChild(renderer.domElement);
 
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.5, 0.55, 0.62);
-    composer.addPass(bloomPass);
+    const quadScene = new THREE.Scene();
+    const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-    const group = new THREE.Group();
-    group.rotation.x = -0.42;
-    scene.add(group);
+    // Rs (Schwarzschild radius) = 1 is the length unit throughout, per the
+    // source project's convention.
+    const DISK_IN = 2.6;
+    const DISK_OUT = 9.2;
 
-    // ---------------------------- event horizon ----------------------------
-    const horizonGeo = new THREE.SphereGeometry(5.1, 48, 48);
-    const horizonMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-    const horizon = new THREE.Mesh(horizonGeo, horizonMat);
-    group.add(horizon);
+    const vertexShader = /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `;
 
-    // ---------------------------- photon ring (soft glow, not a hard edge) ----------------------------
-    // A radial gaussian falloff around the photon radius (~1.5x the
-    // horizon radius, per the article), painted into a texture rather
-    // than a flat-alpha ring — this is the "round 1 → round 2" fix for
-    // hard edges applied specifically to the ring boundary.
-    function makeGlowRingTexture() {
-      const W = 4;
-      const H = 128;
-      const canvas = document.createElement("canvas");
-      canvas.width = W;
-      canvas.height = H;
-      const ctx = canvas.getContext("2d")!;
-      const img = ctx.createImageData(W, H);
-      const photonV = 0.22; // where in the ring's inner→outer span the photon radius sits
-      const sharpness = 18; // ringSharpness from the article
-      for (let y = 0; y < H; y++) {
-        const v = y / (H - 1);
-        const glow = Math.exp(-Math.pow((v - photonV) * sharpness, 2)) + Math.exp(-Math.pow(v * 6, 2)) * 0.4;
-        const b = Math.min(1, glow);
-        for (let x = 0; x < W; x++) {
-          const i = (y * W + x) * 4;
-          // slightly HDR near the peak so bloom picks it out distinctly
-          img.data[i] = Math.min(255, 255 * (0.98 + b * 0.4));
-          img.data[i + 1] = Math.min(255, 255 * (0.94 + b * 0.3));
-          img.data[i + 2] = Math.min(255, 255 * (0.85 + b * 0.15));
-          img.data[i + 3] = Math.round(b * 255);
+    const fragmentShader = /* glsl */ `
+      precision highp float;
+      varying vec2 vUv;
+
+      uniform vec3 uCamPos;
+      uniform mat3 uCamBasis;
+      uniform float uAspect;
+      uniform float uFovTan;
+      uniform float uTime;
+      uniform float uSteps;
+      uniform float uHeat;
+      uniform float uRingGain;
+
+      const float DISK_IN = ${DISK_IN.toFixed(2)};
+      const float DISK_OUT = ${DISK_OUT.toFixed(2)};
+      const float ESCAPE_R2 = 900.0;
+
+      float hash(vec2 p) {
+        p = fract(p * vec2(127.1, 311.7));
+        p += dot(p, p + 34.7);
+        return fract(p.x * p.y);
+      }
+
+      float valueNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        float a = hash(i);
+        float b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0));
+        float d = hash(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+
+      // fractal Brownian motion: several octaves of value noise, each half
+      // the amplitude and roughly double the frequency of the last — this
+      // is what gives the disk its filament/turbulence texture rather than
+      // a smooth gradient
+      float fbm(vec2 p) {
+        float sum = 0.0;
+        float amp = 0.55;
+        for (int i = 0; i < 5; i++) {
+          sum += amp * valueNoise(p);
+          p = p * 2.02 + vec2(17.0, 9.0);
+          amp *= 0.5;
+        }
+        return sum;
+      }
+
+      // rgb = emitted light, a = opacity at this point on the disk
+      vec4 sampleDisk(vec3 hitPos, float r, vec3 rayDir) {
+        float rNorm = clamp((r - DISK_IN) / (DISK_OUT - DISK_IN), 0.0, 1.0);
+
+        // Keplerian differential rotation: inner material both orbits and
+        // visually shears past outer material, angular speed falls off as r^-1.5
+        float omega = 0.85 / pow(r, 1.5);
+        float phase = uTime * omega;
+        float cs = cos(phase), sn = sin(phase);
+        vec2 sheared = mat2(cs, -sn, sn, cs) * hitPos.xz;
+        float turbulence = pow(fbm(sheared * (2.6 + 4.0 * (1.0 - rNorm))), 1.7);
+
+        // temperature gradient: white-hot inner edge cooling to dim red outward
+        vec3 cool = vec3(0.38, 0.08, 0.02);
+        vec3 mid = vec3(1.0, 0.56, 0.2);
+        vec3 hot = vec3(1.0, 0.97, 0.9);
+        vec3 base = mix(cool, mid, smoothstep(0.0, 0.5, 1.0 - rNorm));
+        base = mix(base, hot, smoothstep(0.5, 1.0, 1.0 - rNorm));
+        base = mix(base, hot, uHeat * 0.7 * smoothstep(0.1, 0.85, 1.0 - rNorm));
+
+        // Doppler beaming: material orbiting toward the camera reads
+        // brighter (and whiter) than material orbiting away
+        vec3 tangent = normalize(vec3(hitPos.z, 0.0, -hitPos.x));
+        float approach = dot(tangent, -rayDir);
+        float beam = pow(clamp(1.0 + 0.6 * approach, 0.3, 2.0), 2.2);
+
+        float edgeFade = smoothstep(DISK_IN * 0.95, DISK_IN * 1.15, r) * (1.0 - smoothstep(DISK_OUT * 0.6, DISK_OUT, r));
+        float brightness = (0.12 + turbulence) * beam * edgeFade;
+        brightness *= mix(0.4, 1.3 + uHeat * 0.6, pow(1.0 - rNorm, 1.6));
+
+        float alpha = clamp(turbulence * edgeFade, 0.0, 0.85);
+        return vec4(base * brightness, alpha);
+      }
+
+      void main() {
+        vec2 ndc = vUv * 2.0 - 1.0;
+        vec3 rayDir = normalize(uCamBasis * vec3(ndc.x * uAspect * uFovTan, ndc.y * uFovTan, -1.0));
+
+        vec3 pos = uCamPos;
+        vec3 vel = rayDir;
+        vec3 hVec = cross(pos, vel);
+        float h2 = dot(hVec, hVec);
+
+        vec3 accum = vec3(0.0);
+        float transmittance = 1.0;
+        float minRadius = 1e4;
+        bool captured = false;
+
+        for (int i = 0; i < 320; i++) {
+          if (float(i) >= uSteps) break;
+          float r2 = dot(pos, pos);
+          float r = sqrt(r2);
+          minRadius = min(minRadius, r);
+
+          if (r < 1.0) {
+            captured = true;
+            break;
+          }
+          if (r2 > ESCAPE_R2 && dot(pos, vel) > 0.0) break;
+
+          float dt = clamp(0.13 * (r - 1.0), 0.04, 0.4);
+          // starless weak-field bending approximation for a null geodesic
+          vec3 accel = -1.5 * h2 * pos / (r2 * r2 * r);
+          vel += accel * dt;
+          vec3 nextPos = pos + vel * dt;
+
+          if (pos.y * nextPos.y < 0.0) {
+            float mixT = pos.y / (pos.y - nextPos.y);
+            vec3 hit = mix(pos, nextPos, mixT);
+            float rHit = length(hit.xz);
+            if (rHit > DISK_IN * 0.9 && rHit < DISK_OUT) {
+              vec4 disk = sampleDisk(hit, rHit, normalize(vel));
+              accum += transmittance * disk.rgb;
+              transmittance *= 1.0 - disk.a;
+              if (transmittance < 0.02) break;
+            }
+          }
+          pos = nextPos;
+        }
+
+        // photon ring: rays that wind tightly around r ≈ 1.5 (the photon
+        // sphere) before escaping or being captured pick up a thin bright rim
+        float ringGlow = exp(-pow((minRadius - 1.5) * 2.5, 2.0));
+        accum += vec3(1.0, 0.86, 0.62) * ringGlow * (0.08 + 0.3 * uRingGain);
+
+        if (captured) {
+          // opaque event-horizon shadow — occludes whatever's behind it,
+          // including any disk light already accumulated in front of it
+          gl_FragColor = vec4(accum, 1.0);
+        } else if (transmittance > 0.985 && ringGlow < 0.02) {
+          // ray escaped without touching the disk or the photon sphere —
+          // fully transparent so the page's own background shows through
+          // instead of a painted starfield
+          gl_FragColor = vec4(accum, 0.0);
+        } else {
+          gl_FragColor = vec4(accum, clamp(1.0 - transmittance + ringGlow, 0.0, 1.0));
         }
       }
-      ctx.putImageData(img, 0, 0);
-      const tex = new THREE.CanvasTexture(canvas);
-      tex.needsUpdate = true;
-      return tex;
-    }
-    const ringTexture = makeGlowRingTexture();
-    const ringMat = new THREE.MeshBasicMaterial({
-      map: ringTexture,
-      transparent: true,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const ringGeo = new THREE.RingGeometry(4.9, 8.5, 128, 1);
-    const photonRingFlat = new THREE.Mesh(ringGeo, ringMat);
-    photonRingFlat.rotation.x = Math.PI / 2;
-    group.add(photonRingFlat);
-    const photonRingVertical = new THREE.Mesh(ringGeo, ringMat);
-    group.add(photonRingVertical);
+    `;
 
-    // faint ambient glow behind everything
-    const glowGeo = new THREE.SphereGeometry(7, 32, 32);
-    const glowMat = new THREE.MeshBasicMaterial({
-      color: 0xffb066,
-      transparent: true,
-      opacity: 0.07,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    group.add(new THREE.Mesh(glowGeo, glowMat));
+    const uniforms = {
+      uCamPos: { value: new THREE.Vector3() },
+      uCamBasis: { value: new THREE.Matrix3() },
+      uAspect: { value: 1 },
+      uFovTan: { value: Math.tan(THREE.MathUtils.degToRad(27.5)) },
+      uTime: { value: 0 },
+      uSteps: { value: maxSteps },
+      uHeat: { value: 0.35 },
+      uRingGain: { value: 0.3 },
+    };
 
-    // ---------------------------- accretion disk: particles, not a panel ----------------------------
-    const isMobile = window.matchMedia("(max-width: 1279px)").matches;
-    const COUNT = isMobile ? 6000 : 13000;
-    const INNER_R = 6.2;
-    const OUTER_R = 19;
+    const quadMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(2, 2),
+      new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader,
+        uniforms,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+      })
+    );
+    quadMesh.frustumCulled = false;
+    quadScene.add(quadMesh);
 
-    const radii = new Float32Array(COUNT);
-    const baseAngle = new Float32Array(COUNT);
-    const vertical = new Uint8Array(COUNT); // orientation: flat disk vs. camera-facing halo
-    const seedA = new Float32Array(COUNT);
-    const seedB = new Float32Array(COUNT);
-    const positions = new Float32Array(COUNT * 3);
-    const colors = new Float32Array(COUNT * 3);
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(quadScene, quadCamera));
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.5, 0.35, 0.55);
+    composer.addPass(bloomPass);
+    composer.addPass(new OutputPass());
 
-    for (let i = 0; i < COUNT; i++) {
-      radii[i] = INNER_R + Math.pow(Math.random(), 1.7) * (OUTER_R - INNER_R);
-      baseAngle[i] = Math.random() * Math.PI * 2;
-      // ~65% form the flat disk, ~35% populate the vertical halo loop —
-      // matches the reference's proportion of a wide flared disk plus a
-      // tighter bright halo
-      vertical[i] = Math.random() < 0.35 ? 1 : 0;
-      seedA[i] = Math.random();
-      seedB[i] = Math.random();
-    }
-
-    const diskGeo = new THREE.BufferGeometry();
-    diskGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    diskGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-
-    const sparkTexture = (() => {
-      const size = 32;
-      const c = document.createElement("canvas");
-      c.width = c.height = size;
-      const g = c.getContext("2d")!;
-      const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-      grad.addColorStop(0, "rgba(255,255,255,1)");
-      grad.addColorStop(1, "rgba(255,255,255,0)");
-      g.fillStyle = grad;
-      g.fillRect(0, 0, size, size);
-      return new THREE.CanvasTexture(c);
-    })();
-
-    const diskMat = new THREE.PointsMaterial({
-      size: 0.5,
-      map: sparkTexture,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      sizeAttenuation: true,
-    });
-    const diskPoints = new THREE.Points(diskGeo, diskMat);
-    group.add(diskPoints);
-
-    // temperature ramp by radius (hot near the horizon, cooling outward)
-    const hot = new THREE.Color("#fff8eb");
-    const gold = new THREE.Color("#ffcd82");
-    const amber = new THREE.Color("#e67837");
-    const dim = new THREE.Color("#5a2819");
-    const approachTint = new THREE.Color("#eaf3ff"); // slight blue-white for the Doppler-brightened side
-    const recedeTint = new THREE.Color("#7a2010"); // deep red for the dimmed, receding side
-    const tmpColor = new THREE.Color();
-
-    function tempColor(t: number, out: THREE.Color) {
-      if (t < 0.4) out.copy(dim).lerp(amber, t / 0.4);
-      else if (t < 0.75) out.copy(amber).lerp(gold, (t - 0.4) / 0.35);
-      else out.copy(gold).lerp(hot, (t - 0.75) / 0.25);
-      return out;
-    }
-
-    // ---------------------------- interaction ----------------------------
-    const reduced = reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // a plain camera object purely as a math convenience — never rendered,
+    // just holds position/orientation so its matrixWorld gives us the
+    // right/up/back basis vectors for the shader each frame
+    const cam = new THREE.PerspectiveCamera(55, 1, 0.1, 400);
+    const azimuth = -0.35;
+    const elevation = 0.28;
+    const distance0 = 17;
     const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
     const onPointerMove = (e: PointerEvent) => {
       const rect = mount.getBoundingClientRect();
-      pointer.tx = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
-      pointer.ty = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+      pointer.tx = (e.clientX - rect.left) / rect.width - 0.5;
+      pointer.ty = (e.clientY - rect.top) / rect.height - 0.5;
     };
 
     const resize = () => {
       const w = mount.clientWidth;
       const h = mount.clientHeight;
-      camera.aspect = w / Math.max(h, 1);
-      camera.updateProjectionMatrix();
-      const pr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+      uniforms.uAspect.value = w / Math.max(h, 1);
+      const pr = Math.min(window.devicePixelRatio || 1, 2) * renderScale;
       renderer.setPixelRatio(pr);
       renderer.setSize(w, h, false);
+      composer.setPixelRatio(pr);
       composer.setSize(w, h);
       bloomPass.setSize(w, h);
     };
@@ -235,97 +292,34 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
     let raf = 0;
     let inView = true;
     let t = 0;
-    const posAttr = diskGeo.getAttribute("position") as THREE.BufferAttribute;
-    const colAttr = diskGeo.getAttribute("color") as THREE.BufferAttribute;
+    const m3 = new THREE.Matrix3();
 
     const renderOnce = () => composer.render();
 
     const frame = () => {
-      t += 0.006;
-      pointer.x += (pointer.tx - pointer.x) * 0.04;
-      pointer.y += (pointer.ty - pointer.y) * 0.04;
+      t += 0.01;
+      pointer.x += (pointer.tx - pointer.x) * 0.03;
+      pointer.y += (pointer.ty - pointer.y) * 0.03;
 
-      group.rotation.z = pointer.x * 0.06;
-      group.rotation.x = -0.42 + pointer.y * 0.05 - scrollRef.current * 0.3;
-      camera.position.y = 14 - scrollRef.current * 11;
-      camera.lookAt(0, 0, 0);
-      group.updateMatrixWorld();
+      const az = azimuth + t * 0.015 + pointer.x * 0.5;
+      const el = elevation + pointer.y * 0.25;
+      const dist = distance0 - scrollRef.current * 4;
 
-      // camera position in the group's local space, for a per-frame (not
-      // per-particle) Doppler view-direction reference
-      const inv = group.matrixWorld.clone().invert();
-      const localCam = camera.position.clone().applyMatrix4(inv);
+      cam.position.set(
+        Math.sin(az) * Math.cos(el) * dist,
+        Math.sin(el) * dist,
+        Math.cos(az) * Math.cos(el) * dist
+      );
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld();
 
-      for (let i = 0; i < COUNT; i++) {
-        const r = radii[i];
-        const angularVelocity = 1.5 / Math.pow(r, 1.5); // Keplerian falloff
-        const angle = baseAngle[i] + t * angularVelocity;
-        const cosA = Math.cos(angle);
-        const sinA = Math.sin(angle);
-
-        let px: number, py: number, pz: number, vx: number, vy: number, vz: number;
-        if (vertical[i]) {
-          px = cosA * r;
-          py = sinA * r;
-          pz = 0;
-          vx = -sinA;
-          vy = cosA;
-          vz = 0;
-        } else {
-          px = cosA * r;
-          py = 0;
-          pz = sinA * r;
-          vx = -sinA;
-          vy = 0;
-          vz = cosA;
-        }
-        posAttr.setXYZ(i, px, py, pz);
-
-        // view direction from particle to camera (both in local space)
-        let dx = localCam.x - px;
-        let dy = localCam.y - py;
-        let dz = localCam.z - pz;
-        const dl = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-        dx /= dl;
-        dy /= dl;
-        dz /= dl;
-        const approach = vx * dx + vy * dy + vz * dz; // [-1, 1]
-
-        // layered-sine turbulence standing in for fBm — a few
-        // different-frequency waves over angle/radius/time
-        const flicker =
-          0.62 +
-          0.2 * Math.sin(angle * 4 + t * 4 + seedA[i] * 6.28) +
-          0.14 * Math.sin(angle * 9 - t * 2.3 + seedB[i] * 6.28) +
-          0.1 * Math.sin(r * 0.7 + t * 1.6);
-
-        const radialT = 1 - Math.min(Math.max((r - INNER_R) / (OUTER_R - INNER_R), 0), 1);
-        tempColor(radialT, tmpColor);
-
-        const shiftStrength = 0.85;
-        const shift = approach * shiftStrength;
-        if (shift > 0) tmpColor.lerp(approachTint, Math.min(shift, 1) * 0.55);
-        else tmpColor.lerp(recedeTint, Math.min(-shift, 1) * 0.5);
-
-        const brightness =
-          Math.max(0, flicker) * (1 + Math.max(shift, 0) * 1.3) * (1 + Math.min(shift, 0) * 0.5);
-        // hottest, most Doppler-brightened particles push past 1.0 — with
-        // ACES tone mapping + bloom this reads as genuine HDR glow rather
-        // than clipping to flat white
-        const boost = radialT > 0.85 && shift > 0.3 ? 1.6 : 1;
-
-        colAttr.setXYZ(
-          i,
-          tmpColor.r * brightness * boost,
-          tmpColor.g * brightness * boost,
-          tmpColor.b * brightness * boost
-        );
-      }
-      posAttr.needsUpdate = true;
-      colAttr.needsUpdate = true;
-
-      const pulse = 0.9 + Math.sin(t * 2.2) * 0.08;
-      ringMat.opacity = pulse;
+      uniforms.uCamPos.value.copy(cam.position);
+      const e = cam.matrixWorld.elements;
+      m3.set(e[0], e[4], e[8], e[1], e[5], e[9], e[2], e[6], e[10]);
+      uniforms.uCamBasis.value.copy(m3);
+      uniforms.uTime.value = t;
+      uniforms.uHeat.value = 0.35 + scrollRef.current * 0.35;
+      uniforms.uRingGain.value = 0.3 + scrollRef.current * 0.4;
 
       renderOnce();
       if (inView && !reduced) raf = requestAnimationFrame(frame);
@@ -342,6 +336,19 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
     observer.observe(mount);
 
     resize();
+    if (reduced) {
+      cam.position.set(
+        Math.sin(azimuth) * distance0,
+        Math.sin(elevation) * distance0,
+        Math.cos(azimuth) * distance0
+      );
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld();
+      uniforms.uCamPos.value.copy(cam.position);
+      const e = cam.matrixWorld.elements;
+      m3.set(e[0], e[4], e[8], e[1], e[5], e[9], e[2], e[6], e[10]);
+      uniforms.uCamBasis.value.copy(m3);
+    }
     renderOnce();
     if (!reduced) raf = requestAnimationFrame(frame);
 
@@ -353,16 +360,8 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
       observer.disconnect();
       window.removeEventListener("resize", resize);
       window.removeEventListener("pointermove", onPointerMove);
-      horizonGeo.dispose();
-      horizonMat.dispose();
-      ringGeo.dispose();
-      ringMat.dispose();
-      ringTexture.dispose();
-      glowGeo.dispose();
-      glowMat.dispose();
-      diskGeo.dispose();
-      diskMat.dispose();
-      sparkTexture.dispose();
+      quadMesh.geometry.dispose();
+      (quadMesh.material as THREE.ShaderMaterial).dispose();
       composer.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
