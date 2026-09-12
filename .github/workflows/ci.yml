@@ -27,9 +27,22 @@ jobs:
       - name: Format check
         run: npm run format:check
 
-      - name: Build
+      - name: Build (default — all features on)
         run: npm run build
         env:
           # Placeholder values so the build doesn't depend on real secrets —
           # real deployments (Vercel/Netlify) inject the actual ones.
           NEXT_PUBLIC_SITE_URL: https://example.com
+
+      - name: Build (all features off)
+        # Each feature flag's disabled branch is a separate code path from
+        # the default (see AppReadyProvider.tsx for a bug this caught) —
+        # build it too so a flag's off-state can't silently bit-rot.
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SITE_URL: https://example.com
+          NEXT_PUBLIC_FEATURE_PRELOADER: "false"
+          NEXT_PUBLIC_FEATURE_CURSOR: "false"
+          NEXT_PUBLIC_FEATURE_BLACKHOLE: "false"
+          NEXT_PUBLIC_FEATURE_PWA: "false"
+          NEXT_PUBLIC_FEATURE_SCROLL_PROGRESS: "false"

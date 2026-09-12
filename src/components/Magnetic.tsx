@@ -3,6 +3,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { gsap } from "@/lib/gsap";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { MQ } from "@/config/breakpoints";
+import { features } from "@/config/features";
 
 export default function Magnetic({
   children,
@@ -19,9 +21,8 @@ export default function Magnetic({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const supported =
-      window.matchMedia("(pointer: fine)").matches && window.matchMedia("(min-width: 768px)").matches;
-    if (reducedMotion || !supported) return;
+    const supported = window.matchMedia(MQ.pointerFine).matches && window.matchMedia(MQ.tabletUp).matches;
+    if (!features.customCursor || reducedMotion || !supported) return;
 
     const x = gsap.quickTo(el, "x", { duration: 0.4, ease: "power3.out" });
     const y = gsap.quickTo(el, "y", { duration: 0.4, ease: "power3.out" });

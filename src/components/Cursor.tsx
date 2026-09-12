@@ -4,13 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { gsap } from "@/lib/gsap";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { MQ } from "@/config/breakpoints";
+import { features } from "@/config/features";
 
 /**
  * Desktop-only custom cursor. Disabled entirely (never mounts its DOM,
  * never attaches listeners) when:
+ *  - NEXT_PUBLIC_FEATURE_CURSOR is off,
  *  - the device doesn't have a fine pointer (touch/stylus),
- *  - the viewport is below the tablet breakpoint (768px) — per spec,
- *    mobile keeps the native cursor even on the rare fine-pointer phone,
+ *  - the viewport is below the tablet breakpoint — per spec, mobile keeps
+ *    the native cursor even on the rare fine-pointer phone,
  *  - the user prefers reduced motion.
  */
 export default function Cursor() {
@@ -18,9 +21,9 @@ export default function Cursor() {
   const ringRef = useRef<HTMLDivElement>(null);
   const [label, setLabel] = useState<string | null>(null);
   const reducedMotion = usePrefersReducedMotion();
-  const finePointer = useMediaQuery("(pointer: fine)");
-  const wideViewport = useMediaQuery("(min-width: 768px)");
-  const active = finePointer && wideViewport && !reducedMotion;
+  const finePointer = useMediaQuery(MQ.pointerFine);
+  const wideViewport = useMediaQuery(MQ.tabletUp);
+  const active = features.customCursor && finePointer && wideViewport && !reducedMotion;
 
   useEffect(() => {
     if (!active) return;

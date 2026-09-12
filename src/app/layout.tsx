@@ -1,10 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import { site } from "@/config/site";
+import { theme } from "@/config/theme";
+import { features } from "@/config/features";
 import PwaRegister from "@/components/PwaRegister";
 import SmoothScroll from "@/components/SmoothScroll";
 import Cursor from "@/components/Cursor";
 import Preloader from "@/components/Preloader";
 import ScrollProgress from "@/components/ScrollProgress";
+import AppReadyProvider from "@/components/AppReadyProvider";
 
 // Self-hosted (via @fontsource) rather than next/font/google: no runtime
 // or build-time dependency on fonts.googleapis.com, which matters here
@@ -43,7 +46,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#050507",
+  themeColor: theme.colors.ink,
   width: "device-width",
   initialScale: 1,
 };
@@ -63,12 +66,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-CN" className="h-full">
       <body className="bg-ink font-body text-bone min-h-full antialiased">
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-        <PwaRegister />
-        <Cursor />
-        <ScrollProgress />
-        <Preloader>
-          <SmoothScroll>{children}</SmoothScroll>
-        </Preloader>
+        {features.pwa && <PwaRegister />}
+        {features.customCursor && <Cursor />}
+        {features.scrollProgress && <ScrollProgress />}
+        {features.preloader ? (
+          <Preloader>
+            <SmoothScroll>{children}</SmoothScroll>
+          </Preloader>
+        ) : (
+          <AppReadyProvider>
+            <SmoothScroll>{children}</SmoothScroll>
+          </AppReadyProvider>
+        )}
       </body>
     </html>
   );

@@ -3,6 +3,9 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { heroSceneConfig as cfg } from "@/config/hero-scene";
+import { theme } from "@/config/theme";
+import { MQ } from "@/config/breakpoints";
 
 /**
  * An abstract, slowly-breathing wireframe form with a small halo of
@@ -36,8 +39,8 @@ export default function HeroScene({ className = "" }: { className?: string }) {
     if (!mount) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
-    camera.position.set(0, 0, 34);
+    const camera = new THREE.PerspectiveCamera(cfg.camera.fovDegrees, 1, 0.1, 1000);
+    camera.position.set(0, 0, cfg.camera.distance);
 
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -47,10 +50,13 @@ export default function HeroScene({ className = "" }: { className?: string }) {
     renderer.setClearColor(0x000000, 0);
     mount.appendChild(renderer.domElement);
 
-    const isMobile = window.matchMedia("(max-width: 767px)").matches;
+    const isMobile = !window.matchMedia(MQ.tabletUp).matches;
 
     // ---------------------------- main form ----------------------------
-    const geo = new THREE.IcosahedronGeometry(11, isMobile ? 3 : 5);
+    const geo = new THREE.IcosahedronGeometry(
+      cfg.form.radius,
+      isMobile ? cfg.form.segmentsMobile : cfg.form.segmentsDesktop
+    );
     const mat = new THREE.ShaderMaterial({
       wireframe: true,
       transparent: true,
@@ -58,9 +64,9 @@ export default function HeroScene({ className = "" }: { className?: string }) {
       depthWrite: false,
       uniforms: {
         uTime: { value: 0 },
-        uIntensity: { value: 0.6 },
-        uColorA: { value: new THREE.Color("#c8ff3d") },
-        uColorB: { value: new THREE.Color("#6d4bff") },
+        uIntensity: { value: cfg.form.distortionBase },
+        uColorA: { value: new THREE.Color(theme.colors.accent) },
+        uColorB: { value: new THREE.Color(theme.colors.violet) },
       },
       vertexShader: /* glsl */ `
         uniform float uTime;
@@ -91,13 +97,13 @@ export default function HeroScene({ className = "" }: { className?: string }) {
     scene.add(mesh);
 
     // -------------------------- orbiting fragments --------------------------
-    const FRAG_COUNT = isMobile ? 0 : 36;
+    const FRAG_COUNT = isMobile ? cfg.fragments.countMobile : cfg.fragments.countDesktop;
     let frags: THREE.InstancedMesh | null = null;
     const fragData: { radius: number; speed: number; offset: number; tilt: number }[] = [];
     if (FRAG_COUNT > 0) {
-      const fragGeo = new THREE.TetrahedronGeometry(0.55);
+      const fragGeo = new THREE.TetrahedronGeometry(cfg.fragments.size);
       const fragMat = new THREE.MeshBasicMaterial({
-        color: 0xf4f1ea,
+        color: new THREE.Color(theme.colors.bone),
         transparent: true,
         opacity: 0.35,
         blending: THREE.AdditiveBlending,
@@ -106,7 +112,7 @@ export default function HeroScene({ className = "" }: { className?: string }) {
       frags = new THREE.InstancedMesh(fragGeo, fragMat, FRAG_COUNT);
       for (let i = 0; i < FRAG_COUNT; i++) {
         fragData.push({
-          radius: 16 + Math.random() * 10,
+          radius: cfg.fragments.orbitRadiusMin + Math.random() * cfg.fragments.orbitRadiusRange,
           speed: 0.08 + Math.random() * 0.12,
           offset: Math.random() * Math.PI * 2,
           tilt: (Math.random() - 0.5) * 0.8,
@@ -116,7 +122,7 @@ export default function HeroScene({ className = "" }: { className?: string }) {
     }
 
     // ---------------------------- interaction ----------------------------
-    const reduced = reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = reducedMotion || window.matchMedia(MQ.reducedMotion).matches;
     const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
     const onPointerMove = (e: PointerEvent) => {
       const rect = mount.getBoundingClientRect();
@@ -146,7 +152,8 @@ export default function HeroScene({ className = "" }: { className?: string }) {
       pointer.y += (pointer.ty - pointer.y) * 0.05;
 
       mat.uniforms.uTime.value = t;
-      mat.uniforms.uIntensity.value = 0.5 + scrollRef.current * 1.6;
+      mat.uniforms.uIntensity.value =
+        cfg.form.distortionBase + scrollRef.current * cfg.form.distortionScrollGain;
 
       mesh.rotation.y = t * 0.15 + pointer.x * 0.3;
       mesh.rotation.x = pointer.y * 0.2;

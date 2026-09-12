@@ -7,6 +7,8 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { blackHoleConfig as cfg } from "@/config/blackhole";
+import { MQ, BREAKPOINTS } from "@/config/breakpoints";
 
 /**
  * A real per-pixel geodesic ray-marcher, not a particle trick — ported
@@ -52,10 +54,10 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
     const mount = mountRef.current;
     if (!mount) return;
 
-    const reduced = reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const tier = window.innerWidth < 1280 ? "compact" : "full";
-    const maxSteps = tier === "compact" ? 170 : 280;
-    const renderScale = tier === "compact" ? 0.55 : 0.8;
+    const reduced = reducedMotion || window.matchMedia(MQ.reducedMotion).matches;
+    const tier = window.innerWidth < BREAKPOINTS.desktopFull ? "compact" : "full";
+    const maxSteps = cfg.tiers[tier].maxSteps;
+    const renderScale = cfg.tiers[tier].renderScale;
 
     // ---------------------------- renderer + fullscreen quad ----------------------------
     const renderer = new THREE.WebGLRenderer({
@@ -72,8 +74,16 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
 
     // Rs (Schwarzschild radius) = 1 is the length unit throughout, per the
     // source project's convention.
-    const DISK_IN = 2.6;
-    const DISK_OUT = 9.2;
+    const DISK_IN = cfg.disk.innerRadius;
+    const DISK_OUT = cfg.disk.outerRadius;
+
+    // Convert the config's hex color strings into "r, g, b" GLSL literals
+    // (0–1 floats) so the shader's temperature ramp is driven by
+    // src/config/blackhole.ts instead of hardcoded vec3s.
+    const hexToGlsl = (hex: string) => {
+      const c = new THREE.Color(hex);
+      return `${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)}`;
+    };
 
     const vertexShader = /* glsl */ `
       varying vec2 vUv;
@@ -145,9 +155,9 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
         float turbulence = pow(fbm(sheared * (2.6 + 4.0 * (1.0 - rNorm))), 1.7);
 
         // temperature gradient: white-hot inner edge cooling to dim red outward
-        vec3 cool = vec3(0.38, 0.08, 0.02);
-        vec3 mid = vec3(1.0, 0.56, 0.2);
-        vec3 hot = vec3(1.0, 0.97, 0.9);
+        vec3 cool = vec3(${hexToGlsl(cfg.colors.cool)});
+        vec3 mid = vec3(${hexToGlsl(cfg.colors.mid)});
+        vec3 hot = vec3(${hexToGlsl(cfg.colors.hot)});
         vec3 base = mix(cool, mid, smoothstep(0.0, 0.5, 1.0 - rNorm));
         base = mix(base, hot, smoothstep(0.5, 1.0, 1.0 - rNorm));
         base = mix(base, hot, uHeat * 0.7 * smoothstep(0.1, 0.85, 1.0 - rNorm));
@@ -215,7 +225,7 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
         // photon ring: rays that wind tightly around r ≈ 1.5 (the photon
         // sphere) before escaping or being captured pick up a thin bright rim
         float ringGlow = exp(-pow((minRadius - 1.5) * 2.5, 2.0));
-        accum += vec3(1.0, 0.86, 0.62) * ringGlow * (0.08 + 0.3 * uRingGain);
+        accum += vec3(${hexToGlsl(cfg.colors.photonRing)}) * ringGlow * (0.08 + 0.3 * uRingGain);
 
         if (captured) {
           // opaque event-horizon shadow — occludes whatever's behind it,
@@ -236,7 +246,7 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
       uCamPos: { value: new THREE.Vector3() },
       uCamBasis: { value: new THREE.Matrix3() },
       uAspect: { value: 1 },
-      uFovTan: { value: Math.tan(THREE.MathUtils.degToRad(27.5)) },
+      uFovTan: { value: Math.tan(THREE.MathUtils.degToRad(cfg.camera.fovDegrees / 2)) },
       uTime: { value: 0 },
       uSteps: { value: maxSteps },
       uHeat: { value: 0.35 },
@@ -259,17 +269,22 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
 
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(quadScene, quadCamera));
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.5, 0.35, 0.55);
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(1, 1),
+      cfg.bloom.strength,
+      cfg.bloom.radius,
+      cfg.bloom.threshold
+    );
     composer.addPass(bloomPass);
     composer.addPass(new OutputPass());
 
     // a plain camera object purely as a math convenience — never rendered,
     // just holds position/orientation so its matrixWorld gives us the
     // right/up/back basis vectors for the shader each frame
-    const cam = new THREE.PerspectiveCamera(55, 1, 0.1, 400);
-    const azimuth = -0.35;
-    const elevation = 0.28;
-    const distance0 = 17;
+    const cam = new THREE.PerspectiveCamera(cfg.camera.fovDegrees, 1, 0.1, 400);
+    const azimuth = cfg.camera.azimuth;
+    const elevation = cfg.camera.elevation;
+    const distance0 = cfg.camera.distance;
     const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
     const onPointerMove = (e: PointerEvent) => {
       const rect = mount.getBoundingClientRect();
@@ -303,7 +318,7 @@ export default function BlackHoleScene({ className = "" }: { className?: string 
 
       const az = azimuth + t * 0.015 + pointer.x * 0.5;
       const el = elevation + pointer.y * 0.25;
-      const dist = distance0 - scrollRef.current * 4;
+      const dist = distance0 - scrollRef.current * cfg.camera.scrollDollyDistance;
 
       cam.position.set(
         Math.sin(az) * Math.cos(el) * dist,

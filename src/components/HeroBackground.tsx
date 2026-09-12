@@ -2,22 +2,26 @@
 
 import dynamic from "next/dynamic";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { MQ } from "@/config/breakpoints";
+import { features } from "@/config/features";
 
 const BlackHoleScene = dynamic(() => import("./BlackHoleScene"), { ssr: false });
 const HeroScene = dynamic(() => import("./HeroScene"), { ssr: false });
 
 /**
- * The black hole is the heavier of the two scenes (13k-particle disk +
- * bloom post-processing, continuous per-frame position/color updates) —
- * desktop only. Mobile/tablet keep the lighter wireframe model, consistent
- * with the project's existing "cut 3D complexity below the desktop
- * breakpoint" rule. (BlackHoleScene further tapers its own particle count
- * at the 1024–1279px end of "desktop".)
+ * The black hole (a per-pixel ray-marched shader, see BlackHoleScene.tsx)
+ * is the heavier of the two scenes — desktop only, and only when
+ * NEXT_PUBLIC_FEATURE_BLACKHOLE isn't disabled. Mobile/tablet, and any
+ * deploy with the feature off, get the lighter wireframe model instead,
+ * consistent with the project's "cut 3D complexity below the desktop
+ * breakpoint" rule. (BlackHoleScene further tapers its own step count/
+ * render resolution at the smaller end of "desktop" — see
+ * src/config/breakpoints.ts's `desktopFull`.)
  */
 export default function HeroBackground({ className = "" }: { className?: string }) {
-  const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const isDesktop = useMediaQuery(MQ.desktopUp);
 
-  if (!isDesktop) return <HeroScene className={className} />;
+  if (!isDesktop || !features.blackHole) return <HeroScene className={className} />;
 
   return (
     <div className={`relative h-full w-full ${className}`}>
